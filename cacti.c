@@ -6,23 +6,6 @@
 #include <stdio.h> // todo
 
 
-//typedef struct event_queue {
-//    message_type_t queue[ACTOR_QUEUE_LIMIT];
-//    size_t current_size;
-//} event_queue_t;
-//
-//// FIXME co to ma byc????
-//// Adds new_message to actor's event queue
-//static void add_message(event_queue_t *event_queue, message_type_t new_message) {
-//    if (event_queue->current_size < ACTOR_QUEUE_LIMIT) {
-//        event_queue->queue[event_queue->current_size++] = new_message;
-//    }
-//    else {
-//        exit(21); // queue is full
-//    }
-//}
-
-
 static inline bool is_correct_actor_id(actor_id_t actor) {
     return true;
 }
@@ -112,6 +95,7 @@ static actor_id_t queue_get_actor(actor_queue_t *queue) {
     return result;
 }
 
+// -----------------------------------------------------------------------------------------// -----------------------------------------------------------------------------------------
 // Data structure containing all information about actors.
 typedef struct actors_system {
     pthread_mutex_t mutex;
@@ -137,7 +121,7 @@ typedef struct actors_system {
     size_t first_empty;
     actor_id_t actors_id[CAST_LIMIT];
 
-    pthread_t *threads[POOL_SIZE];
+    pthread_t threads[POOL_SIZE];
 
     bool keep_working;
 } actors_system_t;
@@ -150,23 +134,21 @@ static actors_system_t *actors_pool = NULL;
 static void init_actors_system() {
     printf("Starting init\n");
 
-    actors_pool = (actors_system_t*) malloc(sizeof(actors_system_t));
+    actors_pool = (actors_system_t *) malloc(sizeof(actors_system_t));
 
     actors_pool->waiting_for_actor = 0;
     actors_pool->first_empty = 0;
     actors_pool->keep_working = true;
 
-    actors_pool->actors = (actor_queue_t*) malloc(sizeof(actor_queue_t));
+    actors_pool->actors = (actor_queue_t *) malloc(sizeof(actor_queue_t));
 
     int error_code;
 
     error_code = pthread_mutex_init(&actors_pool->mutex, NULL);
     assert(error_code == 0);
 
-
     error_code = pthread_cond_init(&actors_pool->wait_for_actor, NULL);
     assert(error_code == 0);
-
 
     printf("Finish init\n");
 }
@@ -179,6 +161,15 @@ static void destroy_actors_system() {
     error_code = pthread_cond_destroy(&actors_pool->wait_for_actor);
     assert(error_code == 0);
 
+    error_code = pthread_mutex_destroy(&actors_pool->mutex);
+    assert(error_code == 0);
+
+    for (size_t thread = 0; thread < POOL_SIZE; ++thread) {
+        void *thread_result;
+        error_code = pthread_join(actors_pool->threads[thread], &thread_result);
+        assert(error_code == 0);
+        printf("Deleting %zu thread\n", thread);
+    }
 
     free(actors_pool->actors);
     free(actors_pool);
@@ -186,30 +177,35 @@ static void destroy_actors_system() {
     printf("Finish destroy\n");
 }
 
-//// void *data
-//void *thread_loop(void *d) {
-//    // niech data to jakis bool i bedzie robil az true
-//    // nie data to musi byc actors_system
-//    actors_system_t *data = (actors_system_t*) d;
-//    int error_code;
-//
-//    while (data->keep_working) {
-//        error_code = pthread_mutex_lock(data->mutex);
-//        assert(error_code == 0);
-//
-//        while (data->waiting_for_thread == 0) {
-//            data->waiting_for_actor++;
-//
-//            error_code = pthread_cond_wait(data->wait_for_actor, data->mutex);
-//            assert(error_code == 0);
-//
-//            data->wait_for_actor--;
-//        }
-//
-//        // rob cos z aktorem z kolejki
-//        // jakas akcja aktora czy cos :(
-//    }
-//}
+// Thread work loop.
+void *thread_loop(void *d) {
+    bool keep_working = true;
+    actors_system_t *data = (actors_system_t *) d;
+    int error_code;
+    return (void *) keep_working;
+
+    do {
+        error_code = pthread_mutex_lock(&data->mutex);
+        assert(error_code == 0);
+
+        // Sleep when there are no actors.
+        while (data->actors->current_size == 0) {
+            data->waiting_for_actor++;
+
+            error_code = pthread_cond_wait(&data->wait_for_actor, &data->mutex);
+            assert(error_code == 0);
+
+            data->waiting_for_actor--;
+        }
+
+        // rob cos z aktorem z kolejki
+        // jakas akcja aktora czy cos :(
+        actor_id_t my_actor = queue_get_actor(data->actors);
+
+        printf("Watek rozpoczynam prace z aktorem: %zu\n", my_actor);
+
+    } while (data->keep_working);
+}
 
 // PUBLIC -------------------------------------------------------------------------------------------------------
 
@@ -226,16 +222,14 @@ int actor_system_create(actor_id_t *actor, role_t *const role) {
 
     init_actors_system();
 
-
-//    int error_code;
-//    for (int i = 0; i < POOL_SIZE; ++i) {
-//        actors_pool->threads[i];
-//        // default attr
-//        error_code = pthread_create(actors_pool->threads[i], NULL, thread_loop, actors_pool);
-//        assert(error_code == 0);
-//        printf("Creating %d thread\n", i);
-//    }
-
+    int error_code;
+    for (size_t thread = 0; thread < POOL_SIZE; ++thread) {
+        // Creating threads with default attr.
+        error_code = pthread_create(&actors_pool->threads[thread],
+                                    NULL, thread_loop, actors_pool);
+        assert(error_code == 0);
+        printf("Creating %zu thread\n", thread);
+    }
 
     printf("actor_system_create finished\n");
 
