@@ -39,26 +39,34 @@ void *calculate(void **stateptr, size_t nbystes, void *data) {
 }
 
 int main() {
-    int n;
-    scanf("%d", &n);
-    printf("brute_factorial(%d) = %d\n", n, brute_factorial(n));
+//    int n;
+//    scanf("%d", &n);
+//    printf("brute_factorial(%d) = %d\n", n, brute_factorial(n));
+//
+//    printf("Teraz aktorzy xD!\n");
+//
+//    int error_code;
+//    actor_id_t actor_id;
+//    role_t actor_role;
+//
+//    actor_role = (role_t) {.nprompts = 2, .prompts = {calculate}};
+//
+////    actor_role.nprompts = 1;
+////    actor_role.prompts = malloc(actor_role.nprompts * sizeof(act_t));
+////    actor_role.prompts = &calculate;
+////    actor_role.prompts++;
+////    actor_role.prompts[0] = &calculate;
 
-    printf("Teraz aktorzy xD!\n");
 
-    int error_code;
-    actor_id_t actor_id;
-    role_t actor_role;
-
-    actor_role.nprompts = 2;
-    actor_role.prompts = malloc(actor_role.nprompts * sizeof(act_t));
-    actor_role.prompts = &calculate;
-    actor_role.prompts++;
+//    error_code = actor_system_create(&actor_id, &actor_role);
+//    assert(error_code == 0);
+//
+//    actor_system_join(actor_id);
 
 
-    error_code = actor_system_create(&actor_id, &actor_role);
-    assert(error_code == 0);
-
-    actor_system_join(actor_id);
+    printf("START\n");
+    int result = actor_system_create(NULL, NULL);
+    printf("actor_system_create result = %d\n", result);
 
     return 0;
 }

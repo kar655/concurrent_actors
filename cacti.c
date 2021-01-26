@@ -6,27 +6,28 @@
 #include <stdio.h> // todo
 
 
-typedef struct event_queue {
-    message_type_t queue[ACTOR_QUEUE_LIMIT];
-    size_t current_size;
-} event_queue_t;
+//typedef struct event_queue {
+//    message_type_t queue[ACTOR_QUEUE_LIMIT];
+//    size_t current_size;
+//} event_queue_t;
+//
+//// FIXME co to ma byc????
+//// Adds new_message to actor's event queue
+//static void add_message(event_queue_t *event_queue, message_type_t new_message) {
+//    if (event_queue->current_size < ACTOR_QUEUE_LIMIT) {
+//        event_queue->queue[event_queue->current_size++] = new_message;
+//    }
+//    else {
+//        exit(21); // queue is full
+//    }
+//}
 
 
-void add_message(event_queue_t *event_queue, message_type_t new_message) {
-    if (event_queue->current_size < ACTOR_QUEUE_LIMIT) {
-        event_queue->queue[event_queue->current_size++] = new_message;
-    }
-    else {
-        exit(21); // queue is full
-    }
-}
-
-
-bool is_correct_actor_id(actor_id_t actor) {
+static inline bool is_correct_actor_id(actor_id_t actor) {
     return true;
 }
 
-
+// Cyclic queue of actors' events.
 typedef struct cyclic_queue {
     size_t first_empty;
     size_t first_full;
@@ -35,10 +36,11 @@ typedef struct cyclic_queue {
     message_t *messages[ACTOR_QUEUE_LIMIT];
 } cyclic_queue_t;
 
-void queue_add_message(cyclic_queue_t *queue, message_t *message) {
+// Adds new_message to actor's event queue.
+static void queue_add_message(cyclic_queue_t *queue, message_t *message) {
     if (queue->current_size == ACTOR_QUEUE_LIMIT) {
+        // Current queue is full.
         assert(false); // todo remove this
-//        return -1;
     }
 
     queue->current_size++;
@@ -47,8 +49,10 @@ void queue_add_message(cyclic_queue_t *queue, message_t *message) {
     queue->first_empty = (queue->first_empty + 1) % ACTOR_QUEUE_LIMIT;
 }
 
-message_t *queue_get_message(cyclic_queue_t *queue) {
+// Returns pointer to message that was first in actor's event queue.
+static message_t *queue_get_message(cyclic_queue_t *queue) {
     if (queue->current_size == 0) {
+        // Current queue is empty.
         assert(false); // todo remove this
         return NULL;
     }
@@ -62,16 +66,17 @@ message_t *queue_get_message(cyclic_queue_t *queue) {
     return result;
 }
 
+// Actor's necessary data.
 typedef struct actor {
-    // todo jakies const???
     actor_id_t id;
     cyclic_queue_t *messages;
     role_t *role;
+//    void **stateptr; // TODO cos takiego?
 
     // todo tu jakis cond na czekanie na wiadomosc
 } actor_t;
 
-
+// Queue of actors waiting for free thread.
 typedef struct actor_queue {
     size_t first_empty;
     size_t first_full;
@@ -80,8 +85,10 @@ typedef struct actor_queue {
     actor_id_t actors[CAST_LIMIT];
 } actor_queue_t;
 
-void queue_add_actor(actor_queue_t *queue, actor_id_t actor) {
+// Adds actor to actor_queue.
+static void queue_add_actor(actor_queue_t *queue, actor_id_t actor) {
     if (queue->current_size == CAST_LIMIT) {
+        // actor_queue is full.
         assert(false); //todo
     }
 
@@ -90,10 +97,10 @@ void queue_add_actor(actor_queue_t *queue, actor_id_t actor) {
     queue->first_empty = (queue->first_empty + 1) % CAST_LIMIT;
 }
 
-actor_id_t queue_get_actor(actor_queue_t *queue) {
+// Return first actor's id from queue.
+static actor_id_t queue_get_actor(actor_queue_t *queue) {
     if (queue->current_size == 0) {
         assert(false); // todo
-        return NULL;
     }
 
     queue->current_size--;
@@ -105,15 +112,21 @@ actor_id_t queue_get_actor(actor_queue_t *queue) {
     return result;
 }
 
+// Data structure containing all information about actors.
 typedef struct actors_system {
     pthread_mutex_t *mutex;
-    pthread_cond_t *wait_for_thread;
+    // TODO chyba lepiej dac w kazdym aktorze wait for thread
+    //  ale aktorze nie czekaja XD to nie sa watki
+//    pthread_cond_t *wait_for_thread;
+    // Conditional for waiting for actors.
     pthread_cond_t *wait_for_actor;
-    pthread_cond_t *wait_for_end;
+    // TODO czy to jest potrzebne ?
+    //  nie lepiej zasnac na wait_for_actor i nie przyjmowac nowych aktorów?
+//    pthread_cond_t *wait_for_end;
 
-    size_t waiting_for_thread;
+//    size_t waiting_for_thread;
     size_t waiting_for_actor;
-    size_t waiting_for_end;
+//    size_t waiting_for_end;
 
     actor_queue_t *actors;
 
@@ -126,11 +139,12 @@ typedef struct actors_system {
 } actors_system_t;
 
 // -----------------------------------------------------------------------------------------
-bool system_exists = false;
-actors_system_t *actors_pool;
+// Global data structure maintaining actors.
+//static bool system_exists = false;
+static actors_system_t *actors_pool = NULL;
 // -----------------------------------------------------------------------------------------
 
-void init_actors_system(actors_system_t *actors) {
+static void init_actors_system(actors_system_t *actors) {
     printf("Starting init\n");
 
     assert(actors == NULL);
@@ -166,7 +180,7 @@ void init_actors_system(actors_system_t *actors) {
 }
 
 
-void destroy_actors_system(actors_system_t *actors) {
+static void destroy_actors_system(actors_system_t *actors) {
     printf("Starting destroy\n");
 
     int error_code;
@@ -185,32 +199,32 @@ void destroy_actors_system(actors_system_t *actors) {
     printf("Finish destroy\n");
 }
 
-// void *data
-void *thread_loop(void *d) {
-    // niech data to jakis bool i bedzie robil az true
-    // nie data to musi byc actors_system
-    actors_system_t *data = (actors_system_t*) d;
-    int error_code;
+//// void *data
+//void *thread_loop(void *d) {
+//    // niech data to jakis bool i bedzie robil az true
+//    // nie data to musi byc actors_system
+//    actors_system_t *data = (actors_system_t*) d;
+//    int error_code;
+//
+//    while (data->keep_working) {
+//        error_code = pthread_mutex_lock(data->mutex);
+//        assert(error_code == 0);
+//
+//        while (data->waiting_for_thread == 0) {
+//            data->waiting_for_actor++;
+//
+//            error_code = pthread_cond_wait(data->wait_for_actor, data->mutex);
+//            assert(error_code == 0);
+//
+//            data->wait_for_actor--;
+//        }
+//
+//        // rob cos z aktorem z kolejki
+//        // jakas akcja aktora czy cos :(
+//    }
+//}
 
-    while (data->keep_working) {
-        error_code = pthread_mutex_lock(data->mutex);
-        assert(error_code == 0);
-
-        while (data->waiting_for_thread == 0) {
-            data->waiting_for_actor++;
-
-            error_code = pthread_cond_wait(data->wait_for_actor, data->mutex);
-            assert(error_code == 0);
-
-            data->wait_for_actor--;
-        }
-
-        // rob cos z aktorem z kolejki
-        // jakas akcja aktora czy cos :(
-    }
-}
-
-// PUBLIC --------------------------------------------
+// PUBLIC -------------------------------------------------------------------------------------------------------
 
 
 // Pulę wątków należy zaimplementować jako sposób wewnętrznej organizacji systemu aktorów.
@@ -218,10 +232,12 @@ void *thread_loop(void *d) {
 // actor_system_create. Powinna ona dysponować liczbą wątków zapisaną w stałej POOL_SIZE.
 // Wątki powinny zostać zakończone automatycznie, gdy wszystkie aktory w systemie skończą działanie.
 int actor_system_create(actor_id_t *actor, role_t *const role) {
-    if (system_exists) {
+    if (actors_pool != NULL) {
         printf("Already exists\n");
         assert(false);
     }
+
+    init_actors_system(actors_pool);
 
     int error_code;
     for (int i = 0; i < POOL_SIZE; ++i) {
@@ -229,9 +245,13 @@ int actor_system_create(actor_id_t *actor, role_t *const role) {
         // default attr
         error_code = pthread_create(actors_pool->threads[i], NULL, thread_loop, actors_pool);
         assert(error_code == 0);
+        printf("Creating %d thread\n", i);
     }
 
+
+
     system_exists = true;
+    printf("actor_system_create finished\n");
     return 0;
 }
 
