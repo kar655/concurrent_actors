@@ -7,7 +7,7 @@
 
 
 static inline bool is_correct_actor_id(actor_id_t actor) {
-    return true;
+    return actor >= 0;
 }
 
 // Cyclic queue of actors' events.
@@ -52,9 +52,10 @@ static message_t *queue_get_message(cyclic_queue_t *queue) {
 // Actor's necessary data.
 typedef struct actor {
     actor_id_t id;
+    bool is_dead;
     cyclic_queue_t *messages;
     role_t *role;
-//    void **stateptr; // TODO cos takiego?
+    void **state; // TODO cos takiego?
 
     // todo tu jakis cond na czekanie na wiadomosc
 } actor_t;
@@ -123,6 +124,9 @@ typedef struct actors_system {
 
     // Array of threads.
     pthread_t threads[POOL_SIZE];
+
+    // Number of living actors
+    size_t living_actors;
 
     // Keep working until all actors died or signal was sent.
     bool keep_working;
@@ -197,14 +201,66 @@ static void destroy_actors_system() {
 }
 
 static void add_actor(actor_id_t *actor_id, role_t *const role) {
+    // todo czy tu mutex potrzebny ???
     *actor_id = actors_pool->first_empty;
 
     actors_pool->actors_data[*actor_id] = (actor_t *) malloc(sizeof(actor_t));
     actors_pool->actors_data[*actor_id]->role = role;
     actors_pool->actors_data[*actor_id]->id = *actor_id;
-    actors_pool->actors_data[*actor_id]->messages = (cyclic_queue_t *) malloc(sizeof(cyclic_queue_t));
+    actors_pool->actors_data[*actor_id]->is_dead = false;
+//    *actors_pool->actors_data[*actor_id]->state = NULL;
+    actors_pool->actors_data[*actor_id]->messages =
+            (cyclic_queue_t *) malloc(sizeof(cyclic_queue_t));
 
     actors_pool->first_empty++;
+    actors_pool->living_actors++;
+}
+
+// Performs first message of given actor.
+void perform_message(actor_t *current_actor) {
+    message_t *message = queue_get_message(current_actor->messages);
+    int error_code;
+
+    if (message->message_type == MSG_SPAWN) {
+//        Obsługa tego komunikatu używa pola data komunikatu jako struktury typu role.
+//        Tworzy ona nowego aktora z tak przekazaną rolą, a następnie do nowo utworzonego
+//        aktora wysyła komunikat MSG_HELLO z polem danych zawierającym uchwyt do aktora
+//        ((void*)actor_id, gdzie actor_id jest typu actor_id_t), w którym następuje stworzenie nowego aktora.
+        actor_id_t new_actor;
+        add_actor(&new_actor, message->data);
+
+        message_t new_message = {
+                .message_type = MSG_HELLO,
+                .nbytes = sizeof(void *),
+                .data = (void *) current_actor->id};
+
+        send_message(new_actor, new_message);
+    }
+    else if (message->message_type == MSG_GODIE) {
+        error_code = pthread_mutex_lock(&actors_pool->mutex);
+        assert(error_code == 0);
+        actors_pool->living_actors--;
+
+        if (actors_pool->living_actors == 0) {
+            printf("SYSTEM SHOULD DIE!\n");
+            destroy_actors_system(); // todo co sie stanie xd?
+            assert(false);
+        }
+
+        current_actor->is_dead = true;
+    }
+    else {
+//        Obsługa tego komunikatu nie jest predefiniowana. Jednak obsługa tych komunikatów
+//        jest o tyle ważna, że pozwala ona nowemu aktorowi zdobyć identyfikator pewnego
+//        aktora w systemie, aby móc do niego wysyłać komunikaty. Tym początkowo znanym nowemu
+//        aktorowi aktorem jest aktor, który go stworzył. Identyfikator tego aktora znajduje
+//        się w argumencie data funkcji obsługującej takie komunikaty. Obsługa komunikatu MSG_HELLO
+//        w argumencie stateptr otrzymuje wskaźnik do miejsca w pamięci zawierającego wartość NULL.
+//        Może ona tę wartość zastąpić wskaźnikiem do zainicjalizowanego przez siebie stanu wewnętrznego aktora.
+
+        current_actor->role->prompts[message->message_type](
+                current_actor->state, message->nbytes, message->data);
+    }
 }
 
 // Thread work loop.
@@ -231,10 +287,21 @@ void *thread_loop(void *d) {
         // rob cos z aktorem z kolejki
         // jakas akcja aktora czy cos :(
         actor_id_t my_actor = queue_get_actor(data->actors_queue);
+        actor_t *current_actor = actors_pool->actors_data[my_actor];
+
+        // release mutex
+        error_code = pthread_mutex_unlock(&data->mutex);
+        assert(error_code == 0);
 
         printf("Watek rozpoczynam prace z aktorem: %zu\n", my_actor);
 
+        perform_message(current_actor);
+
+        printf("Watek koncze prace z aktorem: %zu\n", my_actor);
+
     } while (data->keep_working);
+
+    return (void *) keep_working;
 }
 
 // PUBLIC -------------------------------------------------------------------------------------------------------
@@ -252,8 +319,6 @@ int actor_system_create(actor_id_t *actor, role_t *const role) {
 
     init_actors_system();
 
-    printf("actor_system_create finished\n");
-
     add_actor(actor, role);
 
     destroy_actors_system();
@@ -270,13 +335,13 @@ int actor_system_create(actor_id_t *actor, role_t *const role) {
 //}
 //
 //
-//int send_message(actor_id_t actor, message_t message) {
-//    if (!is_correct_actor_id(actor)) {
-//        return -2;
-//    }
-//
-//    // jesli nie zyje return -1
-//
-//
-//    return 0;
-//}
+int send_message(actor_id_t actor, message_t message) {
+    if (!is_correct_actor_id(actor)) {
+        return -2;
+    }
+
+    // jesli nie zyje return -1
+
+
+    return 0;
+}
