@@ -114,12 +114,16 @@ static actor_id_t queue_get_actor(actor_queue_t *queue) {
 
 // Data structure containing all information about actors.
 typedef struct actors_system {
-    pthread_mutex_t *mutex;
+    pthread_mutex_t mutex;
+
     // TODO chyba lepiej dac w kazdym aktorze wait for thread
     //  ale aktorze nie czekaja XD to nie sa watki
 //    pthread_cond_t *wait_for_thread;
+
+
     // Conditional for waiting for actors.
-    pthread_cond_t *wait_for_actor;
+    pthread_cond_t wait_for_actor;
+
     // TODO czy to jest potrzebne ?
     //  nie lepiej zasnac na wait_for_actor i nie przyjmowac nowych aktorów?
 //    pthread_cond_t *wait_for_end;
@@ -140,62 +144,45 @@ typedef struct actors_system {
 
 // -----------------------------------------------------------------------------------------
 // Global data structure maintaining actors.
-//static bool system_exists = false;
 static actors_system_t *actors_pool = NULL;
 // -----------------------------------------------------------------------------------------
 
-static void init_actors_system(actors_system_t *actors) {
+static void init_actors_system() {
     printf("Starting init\n");
 
-    assert(actors == NULL);
-    actors = malloc(sizeof(actors_system_t));
+    actors_pool = (actors_system_t*) malloc(sizeof(actors_system_t));
 
-    actors->waiting_for_thread = 0;
-    actors->waiting_for_actor = 0;
-    actors->waiting_for_end = 0;
+    actors_pool->waiting_for_actor = 0;
+    actors_pool->first_empty = 0;
+    actors_pool->keep_working = true;
 
-    actors->first_empty = 0;
-
-    actors->keep_working = true;
-
-    // todo to jest ok???
-    actor_queue_t new_queue;
-    actors->actors = &new_queue;
+    actors_pool->actors = (actor_queue_t*) malloc(sizeof(actor_queue_t));
 
     int error_code;
 
-    error_code = pthread_mutex_init(actors->mutex, NULL);
+    error_code = pthread_mutex_init(&actors_pool->mutex, NULL);
     assert(error_code == 0);
 
-    error_code = pthread_cond_init(actors->wait_for_thread, NULL);
+
+    error_code = pthread_cond_init(&actors_pool->wait_for_actor, NULL);
     assert(error_code == 0);
 
-    error_code = pthread_cond_init(actors->wait_for_actor, NULL);
-    assert(error_code == 0);
-
-    error_code = pthread_cond_init(actors->wait_for_end, NULL);
-    assert(error_code == 0);
 
     printf("Finish init\n");
 }
 
 
-static void destroy_actors_system(actors_system_t *actors) {
+static void destroy_actors_system() {
     printf("Starting destroy\n");
-
     int error_code;
 
-    error_code = pthread_cond_destroy(actors->wait_for_thread);
+    error_code = pthread_cond_destroy(&actors_pool->wait_for_actor);
     assert(error_code == 0);
 
-    error_code = pthread_cond_destroy(actors->wait_for_thread);
-    assert(error_code == 0);
 
-    error_code = pthread_cond_destroy(actors->wait_for_thread);
-    assert(error_code == 0);
-
-    free(actors);
-    system_exists = false;
+    free(actors_pool->actors);
+    free(actors_pool);
+    actors_pool = NULL; // todo ?
     printf("Finish destroy\n");
 }
 
@@ -237,41 +224,42 @@ int actor_system_create(actor_id_t *actor, role_t *const role) {
         assert(false);
     }
 
-    init_actors_system(actors_pool);
-
-    int error_code;
-    for (int i = 0; i < POOL_SIZE; ++i) {
-        actors_pool->threads[i];
-        // default attr
-        error_code = pthread_create(actors_pool->threads[i], NULL, thread_loop, actors_pool);
-        assert(error_code == 0);
-        printf("Creating %d thread\n", i);
-    }
+    init_actors_system();
 
 
+//    int error_code;
+//    for (int i = 0; i < POOL_SIZE; ++i) {
+//        actors_pool->threads[i];
+//        // default attr
+//        error_code = pthread_create(actors_pool->threads[i], NULL, thread_loop, actors_pool);
+//        assert(error_code == 0);
+//        printf("Creating %d thread\n", i);
+//    }
 
-    system_exists = true;
+
     printf("actor_system_create finished\n");
+
+    destroy_actors_system();
     return 0;
 }
 
 
-// Wywołanie actor_system_join(someact) powoduje oczekiwanie na zakończenie działania systemu
-// aktorów, do którego należy aktor someact. Po tym wywołaniu powinno być możliwe poprawne
-// stworzenie nowego pierwszego aktora za pomocą actor_system_create. W szczególności taka
-// sekwencja nie powinna prowadzić do wycieku pamięci.
-void actor_system_join(actor_id_t actor) {
-
-}
-
-
-int send_message(actor_id_t actor, message_t message) {
-    if (!is_correct_actor_id(actor)) {
-        return -2;
-    }
-
-    // jesli nie zyje return -1
-
-
-    return 0;
-}
+//// Wywołanie actor_system_join(someact) powoduje oczekiwanie na zakończenie działania systemu
+//// aktorów, do którego należy aktor someact. Po tym wywołaniu powinno być możliwe poprawne
+//// stworzenie nowego pierwszego aktora za pomocą actor_system_create. W szczególności taka
+//// sekwencja nie powinna prowadzić do wycieku pamięci.
+//void actor_system_join(actor_id_t actor) {
+//
+//}
+//
+//
+//int send_message(actor_id_t actor, message_t message) {
+//    if (!is_correct_actor_id(actor)) {
+//        return -2;
+//    }
+//
+//    // jesli nie zyje return -1
+//
+//
+//    return 0;
+//}
