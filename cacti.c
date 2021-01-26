@@ -6,9 +6,9 @@
 #include <stdio.h> // todo
 
 
-static inline bool is_correct_actor_id(actor_id_t actor) {
-    return actor >= 0;
-}
+//static inline bool is_correct_actor_id(actor_id_t actor) {
+//    return actor >= 0;
+//}
 
 // Cyclic queue of actors' events.
 typedef struct cyclic_queue {
@@ -201,7 +201,7 @@ static void destroy_actors_system() {
 }
 
 static void add_actor(actor_id_t *actor_id, role_t *const role) {
-    // todo czy tu mutex potrzebny ???
+    // todo czy tu mutex potrzebny ??? TAK
     *actor_id = actors_pool->first_empty;
 
     actors_pool->actors_data[*actor_id] = (actor_t *) malloc(sizeof(actor_t));
@@ -306,6 +306,10 @@ void *thread_loop(void *d) {
 
 // PUBLIC -------------------------------------------------------------------------------------------------------
 
+// Returns current actor's id.
+actor_id_t actor_id_self() {
+    return 0;
+}
 
 // Pulę wątków należy zaimplementować jako sposób wewnętrznej organizacji systemu aktorów.
 // Pula ma być tworzona wraz z utworzeniem systemu wątków w opisanej poniżej procedurze
@@ -326,22 +330,32 @@ int actor_system_create(actor_id_t *actor, role_t *const role) {
 }
 
 
-//// Wywołanie actor_system_join(someact) powoduje oczekiwanie na zakończenie działania systemu
-//// aktorów, do którego należy aktor someact. Po tym wywołaniu powinno być możliwe poprawne
-//// stworzenie nowego pierwszego aktora za pomocą actor_system_create. W szczególności taka
-//// sekwencja nie powinna prowadzić do wycieku pamięci.
-//void actor_system_join(actor_id_t actor) {
-//
-//}
-//
-//
+// Wywołanie actor_system_join(someact) powoduje oczekiwanie na zakończenie działania systemu
+// aktorów, do którego należy aktor someact. Po tym wywołaniu powinno być możliwe poprawne
+// stworzenie nowego pierwszego aktora za pomocą actor_system_create. W szczególności taka
+// sekwencja nie powinna prowadzić do wycieku pamięci.
+void actor_system_join(actor_id_t actor) {
+
+}
+
+
+// Sends message to certain actor.
+// Requires actors_pool's mutex.
 int send_message(actor_id_t actor, message_t message) {
-    if (!is_correct_actor_id(actor)) {
+    if (actor < 0 || actor >= (actor_id_t) actors_pool->first_empty) {
+        printf("NO actor with id = %ld", actor);
         return -2;
     }
 
-    // jesli nie zyje return -1
+    actor_t *receiving_actor = actors_pool->actors_data[actor];
 
+    if (receiving_actor->is_dead
+        || receiving_actor->messages->current_size == ACTOR_QUEUE_LIMIT) {
+        printf("DEAD or FULL actor with id = %ld", actor);
+        return -1;
+    }
+
+    queue_add_message(receiving_actor->messages, &message);
 
     return 0;
 }
