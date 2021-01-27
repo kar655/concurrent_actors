@@ -3,6 +3,9 @@
 #include <stdlib.h>
 #include "cacti.h"
 
+// TODO
+#include <unistd.h>
+
 #define MSG_CALCULATE (message_type_t)0x1
 #define MSG_WAIT (message_type_t)0x2
 // todo wiadomosc na czyszczenie zasobow?
@@ -35,6 +38,7 @@ typedef struct {
 // Hello message handler.
 // Saves parent's id and sends MSG_WAIT to parent.
 void message_hello(void **stateptr, size_t nbytes, void *data) {
+    printf("IN HELLO MESSAGE\n");
     actor_id_t parent_id = (actor_id_t) data;
 
     factorial_info_t *current_state = (factorial_info_t *) stateptr; // todo tu chyba malloc na to
@@ -59,6 +63,7 @@ void message_hello(void **stateptr, size_t nbytes, void *data) {
 
 // Calculates factorial. If not finished makes new actor.
 void calculate_factorial(void **stateptr, size_t nbystes, void *data) {
+    printf("IN CALCULATE FACTORIAL\n");
     factorial_info_t *current_factorial = (factorial_info_t *) data;
     *stateptr = current_factorial;
 
@@ -82,6 +87,7 @@ void calculate_factorial(void **stateptr, size_t nbystes, void *data) {
 // this to its parent to get last factorial state.
 // Parent sends next factorial state to actor with id in *data.
 void son_waiting_for_factorial(void **stateptr, size_t nbystes, void *data) {
+    printf("IN WAIT MESSAGE\n");
     factorial_info_t *current_factorial = (factorial_info_t *) stateptr;
     actor_id_t child_id = (actor_id_t) data;
 
@@ -111,14 +117,13 @@ int main() {
     printf("Teraz aktorzy xD!\n");
 
     int error_code;
-    actor_id_t actor_id;
+    actor_id_t actor_id = -1;
 
     actor_role.nprompts = 3;
-
-    act_t *handlers = (act_t *) malloc(actor_role.nprompts * sizeof(act_t));
-    handlers = (act_t *) {message_hello, calculate_factorial, son_waiting_for_factorial};
-    actor_role.prompts = handlers;
-
+    actor_role.prompts = (act_t[]) {
+            message_hello,
+            calculate_factorial,
+            son_waiting_for_factorial};
 
     error_code = actor_system_create(&actor_id, &actor_role);
     assert(error_code == 0);
@@ -139,7 +144,8 @@ int main() {
     error_code = send_message(actor_id, message);
     assert(error_code == 0);
 
-
+    printf("MAIN THREAD SLEEP\n");
+    sleep(3000);
     actor_system_join(actor_id);
     printf("THIS SHOULD BE LAST MESSAGE\n");
 //    free(handlers);
