@@ -45,7 +45,6 @@ typedef struct actor {
     role_t *role;
     void **state; // TODO cos takiego?
 
-    // todo tu jakis cond na czekanie na wiadomosc
 } actor_t;
 
 // Queue of actors waiting for free thread.
@@ -95,8 +94,9 @@ typedef struct actors_system {
 
 //    pthread_cond_t *wait_for_end;
 
-    // Number of threads waiting for actor. // todo czy potrzebne?
+    // Number of threads waiting for actor.
     size_t waiting_for_actor;
+
 //    size_t waiting_for_end;
 
     // Cyclic queue for threads of actors' ids.
@@ -142,6 +142,7 @@ static void signal_wait_for_actor() {
 }
 
 // Adds new_message to actor's event queue.
+// Requires mutex.
 static void queue_add_message(actor_id_t actor_id, cyclic_queue_t *queue, message_t *message) {
     if (queue->current_size == ACTOR_QUEUE_LIMIT) {
         // Current queue is full.
@@ -157,13 +158,14 @@ static void queue_add_message(actor_id_t actor_id, cyclic_queue_t *queue, messag
     queue->first_empty = (queue->first_empty + 1) % ACTOR_QUEUE_LIMIT;
 
 
-    // If threads are waiting for new tasks.
+    // If this is my first message.
     if (queue->current_size == 1) {
         // First message -> adding to actors_queue
         queue_add_actor(actors_pool->actors_queue, actor_id);
 
+        // Some threads are waiting for actors.
         if (actors_pool->waiting_for_actor > 0) {
-            printf("thread should wake up!\n");
+            printf("thread should wake up! %lu threads are waiting\n", actors_pool->waiting_for_actor);
             signal_wait_for_actor();
             return;
         }
@@ -216,6 +218,7 @@ static void destroy_actors_system() {
     error_code = pthread_mutex_destroy(&actors_pool->mutex);
     assert(error_code == 0);
 
+    // todo join na poczatku?
     for (size_t thread = 0; thread < POOL_SIZE; ++thread) {
         void *thread_result;
         error_code = pthread_join(actors_pool->threads[thread], &thread_result);
@@ -231,7 +234,7 @@ static void destroy_actors_system() {
 
     free(actors_pool->actors_queue);
     free(actors_pool);
-    actors_pool = NULL; // todo ?
+    actors_pool = NULL;
     printf("Finish destroy\n");
 }
 
@@ -253,9 +256,8 @@ static void add_actor(actor_id_t *actor_id, role_t *const role) {
 }
 
 // Performs first message of given actor.
-void perform_message(actor_t *current_actor) {
-    printf("IN PERFORMING MESSAGE!!!!\n");
-    message_t *message = queue_get_message(current_actor->messages_queue);
+void perform_message(actor_t *current_actor, message_t *message) {
+    printf("IN PERFORMING MESSAGE!!!! Got message = %ld\n", message->message_type);
 
     if (message->message_type == MSG_SPAWN) {
         printf("MSG_SPAWN!!\n");
@@ -274,7 +276,6 @@ void perform_message(actor_t *current_actor) {
         send_message(new_actor, new_message);
     }
     else if (message->message_type == MSG_GODIE) {
-        printf("MSG_GODIE!!\n");
         lock_mutex();
         actors_pool->living_actors--;
 
@@ -289,14 +290,6 @@ void perform_message(actor_t *current_actor) {
         unlock_mutex();
     }
     else {
-//        Obsługa tego komunikatu nie jest predefiniowana. Jednak obsługa tych komunikatów
-//        jest o tyle ważna, że pozwala ona nowemu aktorowi zdobyć identyfikator pewnego
-//        aktora w systemie, aby móc do niego wysyłać komunikaty. Tym początkowo znanym nowemu
-//        aktorowi aktorem jest aktor, który go stworzył. Identyfikator tego aktora znajduje
-//        się w argumencie data funkcji obsługującej takie komunikaty. Obsługa komunikatu MSG_HELLO
-//        w argumencie stateptr otrzymuje wskaźnik do miejsca w pamięci zawierającego wartość NULL.
-//        Może ona tę wartość zastąpić wskaźnikiem do zainicjalizowanego przez siebie stanu wewnętrznego aktora.
-        printf("MSG_UNKNOWN!!\n");
         current_actor->role->prompts[message->message_type](
                 current_actor->state, message->nbytes, message->data);
     }
@@ -323,15 +316,15 @@ void *thread_loop(void *d) {
         printf("THREAD ACTION\n");
 
         // Perform first actor's message.
-        // todo dodawanie aktora jesli ma kolejne zadania
         actor_id_t current_actor_id = queue_get_actor(actors_pool->actors_queue);
+        // todo dodawanie aktora jesli ma kolejne zadania
         actor_t *current_actor = actors_pool->actors_data[current_actor_id];
 
         unlock_mutex();
 
         printf("Watek rozpoczynam prace z aktorem: %zu\n", current_actor_id);
 
-        perform_message(current_actor);
+        perform_message(current_actor, queue_get_message(current_actor->messages_queue));
 
         printf("Watek koncze prace z aktorem: %zu\n", current_actor_id);
 
@@ -346,6 +339,7 @@ void *thread_loop(void *d) {
 
 // Returns current actor's id.
 actor_id_t actor_id_self() {
+    // todo
     return 0;
 }
 
@@ -365,7 +359,6 @@ int actor_system_create(actor_id_t *actor, role_t *const role) {
 
     return 0;
 }
-
 
 // Wywołanie actor_system_join(someact) powoduje oczekiwanie na zakończenie działania systemu
 // aktorów, do którego należy aktor someact. Po tym wywołaniu powinno być możliwe poprawne
@@ -390,7 +383,6 @@ int send_message(actor_id_t actor, message_t message) {
 
     actor_t *receiving_actor = actors_pool->actors_data[actor];
 
-    // TODO chyba dalej mutex bo co jak umrze w trakcie???
     if (receiving_actor->is_dead
         || receiving_actor->messages_queue->current_size == ACTOR_QUEUE_LIMIT) {
         printf("DEAD or FULL actor with id = %ld", actor);

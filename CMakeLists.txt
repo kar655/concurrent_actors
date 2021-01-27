@@ -4,8 +4,8 @@ project (CACTI)
 enable_testing()
 
 #set(CMAKE_C_STANDARD ...)
-set(CMAKE_C_FLAGS "-Wall -Wextra -pthread") # todo usunac
-#set(CMAKE_C_FLAGS "-g -Wall -Wextra -pthread") # todo to bylo
+#set(CMAKE_C_FLAGS "-Wall -Wextra -pthread") # todo usunac
+set(CMAKE_C_FLAGS "-g -Wall -Wextra -pthread") # todo to bylo
 
 # http://stackoverflow.com/questions/10555706/
 macro (add_executable _name)

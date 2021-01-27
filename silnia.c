@@ -148,7 +148,6 @@ int main() {
     sleep(3000);
     actor_system_join(actor_id);
     printf("THIS SHOULD BE LAST MESSAGE\n");
-//    free(handlers);
 
     return 0;
 }
