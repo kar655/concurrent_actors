@@ -12,10 +12,12 @@
 // All actors will share same role.
 role_t actor_role;
 
-int brute_factorial(int n) {
-    int result = 1;
+typedef unsigned long long big_int;
 
-    for (int i = 2; i <= n; ++i) {
+big_int brute_factorial(big_int n) {
+    big_int result = 1;
+
+    for (big_int i = 2; i <= n; ++i) {
         result *= i;
     }
 
@@ -24,15 +26,16 @@ int brute_factorial(int n) {
 
 typedef struct {
     actor_id_t parent_id;
-    int current_factorial; // 1 -> k!
-    int current_factor; // 0 -> k
-    int last_step; // n -> n
+    big_int current_factorial; // 1 -> k!
+    big_int current_factor; // 0 -> k
+    big_int last_step; // n -> n
 } factorial_info_t;
 
 
 // Hello message handler.
 // Saves parent's id and sends MSG_WAIT to parent.
 void message_hello(void **stateptr, size_t nbytes, void *data) {
+    (void) nbytes;
     printf("IN HELLO MESSAGE\n");
     actor_id_t parent_id = (actor_id_t) data;
 
@@ -58,7 +61,8 @@ void message_hello(void **stateptr, size_t nbytes, void *data) {
 
 // Calculates factorial. If not finished makes new actor.
 // Data is next_factorial state
-void calculate_factorial(void **stateptr, size_t nbystes, void *data) {
+void calculate_factorial(void **stateptr, size_t nbytes, void *data) {
+    (void) nbytes;
     printf("IN CALCULATE FACTORIAL\n");
 
     factorial_info_t *current_state = (factorial_info_t *) *stateptr;
@@ -68,9 +72,9 @@ void calculate_factorial(void **stateptr, size_t nbystes, void *data) {
     *current_state = *current_factorial;
     current_state->parent_id = parent_id;
 
-    if (current_factorial->last_step == current_factorial->current_factor) {
+    if (current_state->last_step == current_state->current_factor) {
         // finished, can print
-        printf("RESULT ======== %d\n", current_factorial->current_factorial);
+        printf("%lld\n", current_state->current_factorial);
 
         message_t message = {
                 .message_type = MSG_CLEAN,
@@ -92,17 +96,19 @@ void calculate_factorial(void **stateptr, size_t nbystes, void *data) {
         int error_code = send_message(actor_id_self(), message);
         assert(error_code == 0);
     }
+    free(current_factorial);
 }
 
 // When factorial is not finished new actor calls
 // this to its parent to get last factorial state.
 // Parent sends next factorial state to actor with id in *data.
-void son_waiting_for_factorial(void **stateptr, size_t nbystes, void *data) {
+void son_waiting_for_factorial(void **stateptr, size_t nbytes, void *data) {
+    (void) nbytes;
     printf("IN WAIT MESSAGE\n");
     factorial_info_t *current_factorial = (factorial_info_t *) *stateptr;
     actor_id_t child_id = (actor_id_t) data;
 
-    int next_factor = current_factorial->current_factor + 1;
+    big_int next_factor = current_factorial->current_factor + 1;
     factorial_info_t *next_state = (factorial_info_t *) malloc(sizeof(factorial_info_t));
     *next_state = (factorial_info_t) {
             .current_factorial = current_factorial->current_factorial * next_factor,
@@ -125,6 +131,8 @@ void son_waiting_for_factorial(void **stateptr, size_t nbystes, void *data) {
 // Handles MSG_CLEAN to clean up this node and message its parent.
 // nbytes is 0 and data is NULL
 void clean_up(void **stateptr, size_t nbytes, void *data) {
+    (void) nbytes;
+    (void) data;
     printf("CLEANING AFTER NODE\n");
 
     factorial_info_t *current_factorial = (factorial_info_t *) *stateptr;
@@ -169,10 +177,11 @@ void initial_message(void **stateptr, size_t nbystes, void *data) {
 }
 
 int main() {
-    int n;
-//    scanf("%d", &n);
-    n = 5;
-    printf("brute_factorial(%d) = %d\n", n, brute_factorial(n));
+//    int last_value;
+//    scanf("%d", &last_value);
+//    big_int n = (big_int) last_value;
+    big_int n = 5;
+    printf("brute_factorial(%lld) = %lld\n", n, brute_factorial(n));
 
     printf("Teraz aktorzy xD!\n");
 
@@ -192,6 +201,7 @@ int main() {
 
     printf("First actor id = %ld\n", actor_id);
 
+    // Is initialized as actor data and freed by MSG_CLEAN.
     factorial_info_t *initial_factorial =
             (factorial_info_t *) malloc(sizeof(factorial_info_t));
 
@@ -224,6 +234,5 @@ int main() {
     printf("MAIN THREAD SLEEP\n");
     actor_system_join(actor_id);
     printf("THIS SHOULD BE LAST MESSAGE\n");
-
     return 0;
 }

@@ -7,6 +7,8 @@
 
 // STRUCTS ====================================================================
 
+#define printf(...) void
+
 // Cyclic queue of actors' events.
 typedef struct cyclic_queue {
     size_t first_empty;
@@ -97,6 +99,8 @@ static void init_actors_system();
 static void destroy_actors_system();
 
 static void add_actor(actor_id_t *actor_id, role_t *const role);
+
+static void clear_actor(actor_t *actor);
 
 void perform_message(actor_t *current_actor, message_t *message);
 
@@ -232,11 +236,19 @@ static void init_actors_system() {
 
     actors_pool = (actors_system_t *) malloc(sizeof(actors_system_t));
 
-    actors_pool->waiting_for_actor = 0;
-    actors_pool->first_empty = 0;
-    actors_pool->keep_working = true;
+    *actors_pool = (actors_system_t) {
+        .waiting_for_actor = 0,
+        .first_empty = 0,
+        .keep_working = true
+    };
 
     actors_pool->actors_queue = (actor_queue_t *) malloc(sizeof(actor_queue_t));
+
+    *(actors_pool->actors_queue) = (actor_queue_t) {
+        .first_empty = 0,
+        .first_full = 0,
+        .current_size = 0
+    };
 
     int error_code;
 
@@ -283,9 +295,7 @@ static void destroy_actors_system() {
 
     // Free memory allocated for actors.
     for (size_t actor = 0; actor < actors_pool->first_empty; ++actor) {
-        free(actors_pool->actors_data[actor]->messages_queue);
-        free(actors_pool->actors_data[actor]->state);
-        free(actors_pool->actors_data[actor]);
+        clear_actor(actors_pool->actors_data[actor]);
     }
 
     free(actors_pool->actors_queue);
@@ -307,9 +317,24 @@ static void add_actor(actor_id_t *actor_id, role_t *const role) {
     actors_pool->actors_data[*actor_id]->messages_queue =
             (cyclic_queue_t *) malloc(sizeof(cyclic_queue_t));
 
+    *(actors_pool->actors_data[*actor_id]->messages_queue) = (cyclic_queue_t) {
+        .first_empty = 0,
+        .first_full = 0,
+        .current_size = 0
+    };
+
     actors_pool->first_empty++;
     actors_pool->living_actors++;
     unlock_mutex();
+}
+
+static void clear_actor(actor_t *actor) {
+    while (actor->messages_queue->current_size > 0) {
+        free(get_message(actor->messages_queue));
+    }
+
+    free(actor->messages_queue);
+    free(actor);
 }
 
 // Performs first message of given actor.
@@ -345,6 +370,7 @@ void perform_message(actor_t *current_actor, message_t *message) {
 
         // todo clear messages
         unlock_mutex();
+        free(message);
         return;
     }
     else {
@@ -352,6 +378,7 @@ void perform_message(actor_t *current_actor, message_t *message) {
                 &current_actor->state, message->nbytes, message->data);
     }
 
+    free(message);
     lock_mutex();
     // Tries to requeue actor, this unlocks mutex.
     queue_add_actor(actors_pool->actors_queue, current_actor->id);
