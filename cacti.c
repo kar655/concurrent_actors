@@ -34,12 +34,10 @@ static message_t *queue_get_message(cyclic_queue_t *queue) {
 
     queue->current_size--;
 
-    printf("------------ before getting message = %ld\n", queue->messages[queue->first_full]->message_type);
     message_t *result = queue->messages[queue->first_full];
     queue->messages[queue->first_full] = NULL; // todo nie potrzebne raczej
     queue->first_full = (queue->first_full + 1) % ACTOR_QUEUE_LIMIT;
 
-    printf("------------ after getting message = %ld\n", result->message_type);
     return result;
 }
 
@@ -47,6 +45,7 @@ static message_t *queue_get_message(cyclic_queue_t *queue) {
 typedef struct actor {
     actor_id_t id;
     bool is_dead;
+    bool in_queue;
     cyclic_queue_t *messages_queue;
     role_t *role;
     void *state; // TODO cos takiego?
@@ -63,31 +62,7 @@ typedef struct actor_queue {
 } actor_queue_t;
 
 // Adds actor to actor_queue.
-static void queue_add_actor(actor_queue_t *queue, actor_id_t actor) {
-    if (queue->current_size == CAST_LIMIT) {
-        // actor_queue is full.
-        assert(false); //todo
-    }
-
-    queue->current_size++;
-    queue->actors[queue->first_empty] = actor;
-    queue->first_empty = (queue->first_empty + 1) % CAST_LIMIT;
-}
-
-// Return first actor's id from queue.
-static actor_id_t queue_get_actor(actor_queue_t *queue) {
-    if (queue->current_size == 0) {
-        assert(false); // todo
-    }
-
-    queue->current_size--;
-
-    actor_id_t result = queue->actors[queue->first_full];
-    queue->actors[queue->first_full] = -1; // todo
-    queue->first_full = (queue->first_full + 1) % CAST_LIMIT;
-
-    return result;
-}
+static void queue_add_actor(actor_queue_t *queue, actor_id_t actor);
 
 // -----------------------------------------------------------------------------------------// -----------------------------------------------------------------------------------------
 // Data structure containing all information about actors.
@@ -129,14 +104,50 @@ typedef struct actors_system {
 static actors_system_t *actors_pool = NULL;
 // -----------------------------------------------------------------------------------------
 
+// Adds actor to actor_queue.
+static void queue_add_actor(actor_queue_t *queue, actor_id_t actor) {
+    if (queue->current_size == CAST_LIMIT) {
+        // actor_queue is full.
+        assert(false); //todo
+    }
+
+    if (actors_pool->actors_data[actor]->in_queue) {
+        printf("ACTOR ALREADY IN QUEUE!!!!!=========================================\n");
+        return;
+    }
+    actors_pool->actors_data[actor]->in_queue = true;
+
+    queue->current_size++;
+    queue->actors[queue->first_empty] = actor;
+    queue->first_empty = (queue->first_empty + 1) % CAST_LIMIT;
+}
+
+// Return first actor's id from queue.
+static actor_id_t queue_get_actor(actor_queue_t *queue) {
+    if (queue->current_size == 0) {
+        assert(false); // todo
+    }
+
+    queue->current_size--;
+
+    actor_id_t result = queue->actors[queue->first_full];
+    queue->actors[queue->first_full] = -1; // todo
+    queue->first_full = (queue->first_full + 1) % CAST_LIMIT;
+
+    assert(actors_pool->actors_data[result]->in_queue);
+    actors_pool->actors_data[result]->in_queue = false;
+
+    return result;
+}
+
 static void lock_mutex() {
     int error_code = pthread_mutex_lock(&actors_pool->mutex);
     assert(error_code == 0);
-    printf("LOCKED MUTEX\n");
+//    printf("LOCKED MUTEX\n");
 }
 
 static void unlock_mutex() {
-    printf("UNLOCKING MUTEX\n");
+//    printf("UNLOCKING MUTEX\n");
     int error_code = pthread_mutex_unlock(&actors_pool->mutex);
     assert(error_code == 0);
 }
@@ -157,15 +168,12 @@ static void queue_add_message(actor_id_t actor_id, cyclic_queue_t *queue, messag
 
     queue->current_size++;
 
-    printf("------------ adding message text = %ld\n", message->message_type);
     queue->messages[queue->first_empty] = message;
-    printf("------------ adding message = %ld\n", queue->messages[queue->first_empty]->message_type);
-    printf("------------ adding message text = %ld\n", message->message_type);
     queue->first_empty = (queue->first_empty + 1) % ACTOR_QUEUE_LIMIT;
 
 
     // If this is my first message.
-    if (queue->current_size == 1) {
+    if (queue->current_size > 1) {
         // First message -> adding to actors_queue
         queue_add_actor(actors_pool->actors_queue, actor_id);
 
@@ -211,6 +219,12 @@ static void init_actors_system() {
         printf("Creating %zu thread\n", thread);
     }
 
+    lock_mutex();
+    for (size_t i = 0; i < CAST_LIMIT; ++i) {
+        actors_pool->actors_queue->actors[i] = -1;
+    }
+    unlock_mutex();
+
     printf("Finish init\n");
 }
 
@@ -252,6 +266,7 @@ static void add_actor(actor_id_t *actor_id, role_t *const role) {
     actors_pool->actors_data[*actor_id]->role = role;
     actors_pool->actors_data[*actor_id]->id = *actor_id;
     actors_pool->actors_data[*actor_id]->is_dead = false;
+    actors_pool->actors_data[*actor_id]->in_queue = false;
     actors_pool->actors_data[*actor_id]->messages_queue =
             (cyclic_queue_t *) malloc(sizeof(cyclic_queue_t));
 
@@ -299,6 +314,11 @@ void perform_message(actor_t *current_actor, message_t *message) {
         current_actor->role->prompts[message->message_type](
                 &current_actor->state, message->nbytes, message->data);
     }
+
+    lock_mutex();
+    // Tries to requeue actor.
+    queue_add_actor(actors_pool->actors_queue, current_actor->id);
+    unlock_mutex();
 }
 
 // Thread work loop.
