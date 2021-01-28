@@ -5,12 +5,7 @@
 #include <pthread.h>
 #include <stdio.h> // todo
 
-static message_t *copy_message(message_t message) {
-    message_t *copied = (message_t *) malloc(sizeof(message));
-    *copied = message;
-
-    return copied;
-}
+// STRUCTS ====================================================================
 
 // Cyclic queue of actors' events.
 typedef struct cyclic_queue {
@@ -20,26 +15,6 @@ typedef struct cyclic_queue {
 
     message_t *messages[ACTOR_QUEUE_LIMIT];
 } cyclic_queue_t;
-
-// Adds new_message to actor's event queue.
-static void queue_add_message(actor_id_t actor_id, cyclic_queue_t *queue, message_t *message);
-
-// Returns pointer to message that was first in actor's event queue.
-static message_t *queue_get_message(cyclic_queue_t *queue) {
-    if (queue->current_size == 0) {
-        // Current queue is empty.
-        assert(false); // todo remove this
-        return NULL;
-    }
-
-    queue->current_size--;
-
-    message_t *result = queue->messages[queue->first_full];
-    queue->messages[queue->first_full] = NULL; // todo nie potrzebne raczej
-    queue->first_full = (queue->first_full + 1) % ACTOR_QUEUE_LIMIT;
-
-    return result;
-}
 
 // Actor's necessary data.
 typedef struct actor {
@@ -61,10 +36,6 @@ typedef struct actor_queue {
     actor_id_t actors[CAST_LIMIT];
 } actor_queue_t;
 
-// Adds actor to actor_queue.
-static void queue_add_actor(actor_queue_t *queue, actor_id_t actor);
-
-// -----------------------------------------------------------------------------------------// -----------------------------------------------------------------------------------------
 // Data structure containing all information about actors.
 typedef struct actors_system {
     // Mutex for working with actors_system.
@@ -73,12 +44,8 @@ typedef struct actors_system {
     // Conditional for waiting for actors.
     pthread_cond_t wait_for_actor;
 
-//    pthread_cond_t *wait_for_end;
-
     // Number of threads waiting for actor.
     size_t waiting_for_actor;
-
-//    size_t waiting_for_end;
 
     // Cyclic queue for threads of actors' ids.
     actor_queue_t *actors_queue;
@@ -99,57 +66,44 @@ typedef struct actors_system {
     bool keep_working;
 } actors_system_t;
 
-// -----------------------------------------------------------------------------------------
+// DATA =======================================================================
+
 // Global data structure maintaining actors.
 static actors_system_t *actors_pool = NULL;
+
+// Thread local variable of current actor being processed.
 static __thread actor_id_t thread_actor_id = -1;
-// -----------------------------------------------------------------------------------------
 
-static void signal_wait_for_actor();
+// DECLARATIONS ===============================================================
+static message_t *copy_message(message_t message);
+
+static void lock_mutex();
 static void unlock_mutex();
+static void signal_wait_for_actor();
 
-// Adds actor to actor_queue.
-static void queue_add_actor(actor_queue_t *queue, actor_id_t actor) {
-    if (queue->current_size == CAST_LIMIT) {
-        // actor_queue is full.
-        assert(false); //todo
-    }
+static message_t *get_message(cyclic_queue_t *queue);
+static void add_message(actor_id_t actor_id, cyclic_queue_t *queue, message_t *message);
 
-    if (actors_pool->actors_data[actor]->in_queue) {
-        printf("ACTOR ALREADY IN QUEUE!!!!!=========================================\n");
-        return;
-    }
-    actors_pool->actors_data[actor]->in_queue = true;
+static void queue_add_actor(actor_queue_t *queue, actor_id_t actor);
+static actor_id_t queue_get_actor(actor_queue_t *queue);
 
-    queue->current_size++;
-    queue->actors[queue->first_empty] = actor;
-    queue->first_empty = (queue->first_empty + 1) % CAST_LIMIT;
+static void init_actors_system();
+static void destroy_actors_system();
 
-    // Some threads are waiting for actors.
-    if (actors_pool->waiting_for_actor > 0) {
-        printf("thread should wake up! %lu threads are waiting\n", actors_pool->waiting_for_actor);
-        signal_wait_for_actor();
-        return;
-    }
-    unlock_mutex();
-}
+static void add_actor(actor_id_t *actor_id, role_t *const role);
+void perform_message(actor_t *current_actor, message_t *message);
 
-// Return first actor's id from queue.
-static actor_id_t queue_get_actor(actor_queue_t *queue) {
-    if (queue->current_size == 0) {
-        assert(false); // todo
-    }
+static void *thread_loop(void *d);
 
-    queue->current_size--;
 
-    actor_id_t result = queue->actors[queue->first_full];
-    queue->actors[queue->first_full] = -1; // todo
-    queue->first_full = (queue->first_full + 1) % CAST_LIMIT;
+// IMPLEMENTATION =============================================================
 
-    assert(actors_pool->actors_data[result]->in_queue);
-    actors_pool->actors_data[result]->in_queue = false;
 
-    return result;
+static message_t *copy_message(message_t message) {
+    message_t *copied = (message_t *) malloc(sizeof(message));
+    *copied = message;
+
+    return copied;
 }
 
 static void lock_mutex() {
@@ -170,9 +124,26 @@ static void signal_wait_for_actor() {
     assert(error_code == 0);
 }
 
+// Returns pointer to message that was first in actor's event queue.
+static message_t *get_message(cyclic_queue_t *queue) {
+    if (queue->current_size == 0) {
+        // Current queue is empty.
+        assert(false); // todo remove this
+        return NULL;
+    }
+
+    queue->current_size--;
+
+    message_t *result = queue->messages[queue->first_full];
+    queue->messages[queue->first_full] = NULL; // todo nie potrzebne raczej
+    queue->first_full = (queue->first_full + 1) % ACTOR_QUEUE_LIMIT;
+
+    return result;
+}
+
 // Adds new_message to actor's event queue.
-// Requires mutex.
-static void queue_add_message(actor_id_t actor_id, cyclic_queue_t *queue, message_t *message) {
+// Unlocks mutex.
+static void add_message(actor_id_t actor_id, cyclic_queue_t *queue, message_t *message) {
     if (queue->current_size == ACTOR_QUEUE_LIMIT) {
         // Current queue is full.
         assert(false); // todo remove this
@@ -188,22 +159,64 @@ static void queue_add_message(actor_id_t actor_id, cyclic_queue_t *queue, messag
     if (queue->current_size > 0) {
         // First message -> adding to actors_queue
         queue_add_actor(actors_pool->actors_queue, actor_id);
-
-//        // Some threads are waiting for actors.
-//        if (actors_pool->waiting_for_actor > 0) {
-//            printf("thread should wake up! %lu threads are waiting\n", actors_pool->waiting_for_actor);
-//            signal_wait_for_actor();
-//            return;
-//        }
     }
     else {
         unlock_mutex();
     }
 }
 
+// Adds actor to actor_queue.
+// Unlocks mutex.
+static void queue_add_actor(actor_queue_t *queue, actor_id_t actor) {
+    if (queue->current_size == CAST_LIMIT) {
+        // actor_queue is full.
+        assert(false); //todo
+    }
 
-//todo
-void *thread_loop(void *d);
+    if (actors_pool->actors_data[actor]->in_queue) {
+        printf("ACTOR ALREADY IN QUEUE!!!!! MUST HAVE BEEN ADDED EARLIER\n");
+        unlock_mutex();
+        return;
+    }
+    else if (actors_pool->actors_data[actor]->messages_queue->current_size == 0) {
+        printf("ACTOR DOESNT HAVE ANY MESSAGE - NOT ADDED\n");
+        unlock_mutex();
+        return;
+    }
+
+    actors_pool->actors_data[actor]->in_queue = true;
+
+    queue->current_size++;
+    queue->actors[queue->first_empty] = actor;
+    queue->first_empty = (queue->first_empty + 1) % CAST_LIMIT;
+
+    // Some threads are waiting for actors.
+    if (actors_pool->waiting_for_actor > 0) {
+        printf("thread should wake up! %lu threads are waiting\n", actors_pool->waiting_for_actor);
+        signal_wait_for_actor();
+    }
+    else {
+        unlock_mutex();
+    }
+}
+
+// Return first actor's id from queue.
+static actor_id_t queue_get_actor(actor_queue_t *queue) {
+    if (queue->current_size == 0) {
+        assert(false); // todo
+    }
+
+    queue->current_size--;
+
+    actor_id_t result = queue->actors[queue->first_full];
+    queue->actors[queue->first_full] = -1; // todo
+    queue->first_full = (queue->first_full + 1) % CAST_LIMIT;
+
+    assert(actors_pool->actors_data[result]->in_queue);
+    actors_pool->actors_data[result]->in_queue = false;
+
+    return result;
+}
 
 static void init_actors_system() {
     printf("Starting init\n");
@@ -224,6 +237,7 @@ static void init_actors_system() {
     error_code = pthread_cond_init(&actors_pool->wait_for_actor, NULL);
     assert(error_code == 0);
 
+    lock_mutex();
     // Creating threads with default attr.
     for (size_t thread = 0; thread < POOL_SIZE; ++thread) {
         error_code = pthread_create(&actors_pool->threads[thread],
@@ -232,7 +246,6 @@ static void init_actors_system() {
         printf("Creating %zu thread\n", thread);
     }
 
-    lock_mutex();
     for (size_t i = 0; i < CAST_LIMIT; ++i) {
         actors_pool->actors_queue->actors[i] = -1;
     }
@@ -283,7 +296,6 @@ static void add_actor(actor_id_t *actor_id, role_t *const role) {
     actors_pool->actors_data[*actor_id]->messages_queue =
             (cyclic_queue_t *) malloc(sizeof(cyclic_queue_t));
 
-
     actors_pool->first_empty++;
     actors_pool->living_actors++;
     unlock_mutex();
@@ -295,10 +307,8 @@ void perform_message(actor_t *current_actor, message_t *message) {
 
     if (message->message_type == MSG_SPAWN) {
         printf("MSG_SPAWN!!\n");
-//        Obsługa tego komunikatu używa pola data komunikatu jako struktury typu role.
-//        Tworzy ona nowego aktora z tak przekazaną rolą, a następnie do nowo utworzonego
-//        aktora wysyła komunikat MSG_HELLO z polem danych zawierającym uchwyt do aktora
-//        ((void*)actor_id, gdzie actor_id jest typu actor_id_t), w którym następuje stworzenie nowego aktora.
+
+        // Data field is the new role.
         actor_id_t new_actor;
         add_actor(&new_actor, message->data);
 
@@ -307,6 +317,7 @@ void perform_message(actor_t *current_actor, message_t *message) {
                 .nbytes = sizeof(void *),
                 .data = (void *) current_actor->id}; // todo czy z &?
 
+        // Sends hello message to new actor.
         send_message(new_actor, new_message);
     }
     else if (message->message_type == MSG_GODIE) {
@@ -322,6 +333,7 @@ void perform_message(actor_t *current_actor, message_t *message) {
         current_actor->is_dead = true;
 
         unlock_mutex();
+        return;
     }
     else {
         current_actor->role->prompts[message->message_type](
@@ -329,13 +341,12 @@ void perform_message(actor_t *current_actor, message_t *message) {
     }
 
     lock_mutex();
-    // Tries to requeue actor.
+    // Tries to requeue actor, this unlocks mutex.
     queue_add_actor(actors_pool->actors_queue, current_actor->id);
-//    unlock_mutex();
 }
 
 // Thread work loop.
-void *thread_loop(void *d) {
+static void *thread_loop(void *d) {
     int error_code;
 
     do {
@@ -356,7 +367,6 @@ void *thread_loop(void *d) {
 
         // Perform first actor's message.
         actor_id_t current_actor_id = queue_get_actor(actors_pool->actors_queue);
-        // todo dodawanie aktora jesli ma kolejne zadania
         actor_t *current_actor = actors_pool->actors_data[current_actor_id];
 
         unlock_mutex();
@@ -364,7 +374,7 @@ void *thread_loop(void *d) {
         printf("Watek rozpoczynam prace z aktorem: %zu\n", current_actor_id);
         thread_actor_id = current_actor_id;
 
-        perform_message(current_actor, queue_get_message(current_actor->messages_queue));
+        perform_message(current_actor, get_message(current_actor->messages_queue));
 
         printf("Watek koncze prace z aktorem: %zu\n", current_actor_id);
         thread_actor_id = -1;
@@ -376,17 +386,13 @@ void *thread_loop(void *d) {
     return NULL;
 }
 
-// PUBLIC -------------------------------------------------------------------------------------------------------
+// PUBLIC =====================================================================
 
 // Returns current actor's id.
 actor_id_t actor_id_self() {
     return thread_actor_id;
 }
 
-// Pulę wątków należy zaimplementować jako sposób wewnętrznej organizacji systemu aktorów.
-// Pula ma być tworzona wraz z utworzeniem systemu wątków w opisanej poniżej procedurze
-// actor_system_create. Powinna ona dysponować liczbą wątków zapisaną w stałej POOL_SIZE.
-// Wątki powinny zostać zakończone automatycznie, gdy wszystkie aktory w systemie skończą działanie.
 int actor_system_create(actor_id_t *actor, role_t *const role) {
     if (actors_pool != NULL) {
         printf("Already exists\n");
@@ -409,9 +415,7 @@ void actor_system_join(actor_id_t actor) {
     destroy_actors_system();
 }
 
-
 // Sends message to certain actor.
-// Requires actors_pool's mutex.
 int send_message(actor_id_t actor, message_t message) {
     lock_mutex();
 
@@ -430,8 +434,8 @@ int send_message(actor_id_t actor, message_t message) {
         return -1;
     }
 
-    // queue_add_message unlocks mutex.
-    queue_add_message(actor, receiving_actor->messages_queue, copy_message(message));
+    // add_message unlocks mutex.
+    add_message(actor, receiving_actor->messages_queue, copy_message(message));
 
     return 0;
 }
