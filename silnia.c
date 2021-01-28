@@ -45,11 +45,10 @@ typedef struct {
 // Saves parent's id and sends MSG_WAIT to parent.
 void message_hello(void **stateptr, size_t nbytes, void *data) {
     printf("IN HELLO MESSAGE\n");
-    actor_id_t parent_id = (actor_id_t) data;
+    actor_id_t parent_id = *((actor_id_t *) data);
 
-    factorial_info_t *current_state = (factorial_info_t *) *stateptr; // todo tu chyba malloc na to
-    // todo to wyzej chyba zle, tam jest null i ja dopiero sobie robie tam
-    current_state = (factorial_info_t *) malloc(sizeof(factorial_info_t));
+    factorial_info_t *current_state = (factorial_info_t *) malloc(sizeof(factorial_info_t));
+    *stateptr = (void *) current_state;
 
     current_state->parent_id = parent_id;
 
@@ -58,8 +57,12 @@ void message_hello(void **stateptr, size_t nbytes, void *data) {
     // Sending message MSG_WAIT to parent to get next state of factorial.
     message_t message = {
             .message_type = MSG_WAIT,
-            .nbytes = sizeof(void *),
+            .nbytes = sizeof(actor_id_t),
             .data = (void *) actor_id_self()};
+//    message_t message = {
+//            .message_type = MSG_WAIT,
+//            .nbytes = sizeof(actor_id_t *),
+//            .data = (void *) &actor_id_self};
 
     int error_code = send_message(current_state->parent_id, message);
     assert(error_code == 0);
@@ -109,8 +112,9 @@ void calculate_factorial(void **stateptr, size_t nbystes, void *data) {
 // Parent sends next factorial state to actor with id in *data.
 void son_waiting_for_factorial(void **stateptr, size_t nbystes, void *data) {
     printf("IN WAIT MESSAGE\n");
-    factorial_info_t *current_factorial = (factorial_info_t *) stateptr;
+    factorial_info_t *current_factorial = (factorial_info_t *) *stateptr;
     actor_id_t child_id = (actor_id_t) data;
+//    actor_id_t child_id = *((actor_id_t *) data);
 
     int next_factor = current_factorial->current_factor + 1;
     factorial_info_t next_state = {
@@ -158,26 +162,9 @@ void initial_message(void **stateptr, size_t nbystes, void *data) {
     assert(nbystes == 0 && data == NULL);
     assert(stateptr != NULL);
 
-    // to jest ok
-//    *stateptr = (factorial_info_t *) malloc(sizeof(factorial_info_t));
-
     factorial_info_t *current_state = (factorial_info_t *) malloc(sizeof(factorial_info_t));
     current_state->parent_id = -1;
     *stateptr = (void *) current_state;
-
-
-
-//    current_state = (factorial_info_t *) malloc(sizeof(factorial_info_t));
-//    current_state->parent_id = -1;
-//    *stateptr = (void *) malloc(sizeof(factorial_info_t *));
-//    *stateptr = (void *) &current_state;
-
-
-//    factorial_info_t *current_state = (factorial_info_t *) stateptr;
-//    assert(current_state == NULL);
-//    current_state = (factorial_info_t *) malloc(sizeof(factorial_info_t));
-//    current_state->parent_id = -1;
-//    current_state->parent_id = actor_id_self();
 }
 
 int main() {

@@ -314,8 +314,8 @@ void perform_message(actor_t *current_actor, message_t *message) {
 
         message_t new_message = {
                 .message_type = MSG_HELLO,
-                .nbytes = sizeof(void *),
-                .data = (void *) current_actor->id}; // todo czy z &?
+                .nbytes = sizeof(actor_id_t *),
+                .data = (void *) &current_actor->id}; // todo czy z &?
 
         // Sends hello message to new actor.
         send_message(new_actor, new_message);
