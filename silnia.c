@@ -5,6 +5,7 @@
 
 // TODO
 #include <unistd.h>
+#include <stdbool.h>
 
 #define MSG_CALCULATE (message_type_t)0x1
 #define MSG_WAIT (message_type_t)0x2
@@ -45,7 +46,8 @@ typedef struct {
 // Saves parent's id and sends MSG_WAIT to parent.
 void message_hello(void **stateptr, size_t nbytes, void *data) {
     printf("IN HELLO MESSAGE\n");
-    actor_id_t parent_id = *((actor_id_t *) data);
+    actor_id_t parent_id = (actor_id_t) data;
+//    actor_id_t parent_id = *((actor_id_t *) data);
 
     factorial_info_t *current_state = (factorial_info_t *) malloc(sizeof(factorial_info_t));
     *stateptr = (void *) current_state;
@@ -117,7 +119,8 @@ void son_waiting_for_factorial(void **stateptr, size_t nbystes, void *data) {
 //    actor_id_t child_id = *((actor_id_t *) data);
 
     int next_factor = current_factorial->current_factor + 1;
-    factorial_info_t next_state = {
+    factorial_info_t *next_state = (factorial_info_t *) malloc(sizeof(factorial_info_t));
+    *next_state = (factorial_info_t) {
             .current_factorial = current_factorial->current_factorial * next_factor,
             .current_factor = next_factor,
             .last_step = current_factorial->last_step};
@@ -125,7 +128,7 @@ void son_waiting_for_factorial(void **stateptr, size_t nbystes, void *data) {
     message_t message = {
             .message_type = MSG_CALCULATE,
             .nbytes = sizeof(factorial_info_t *),
-            .data = (void *) &next_state};
+            .data = (void *) next_state};
 
     printf("SENDING MSG_CALCULATE to child %ld\n", child_id);
 
@@ -138,6 +141,12 @@ void son_waiting_for_factorial(void **stateptr, size_t nbystes, void *data) {
 void clean_up(void **stateptr, size_t nbytes, void *data) {
     printf("CLEANING AFTER NODE\n");
 
+    factorial_info_t *current_factorial = (factorial_info_t *) *stateptr;
+
+    actor_id_t parent_id = current_factorial->parent_id;
+    bool first_actor = current_factorial->current_factor == 0;
+    free(current_factorial);
+
     message_t message = {
             .message_type = MSG_GODIE,
             .nbytes = 0,
@@ -147,11 +156,16 @@ void clean_up(void **stateptr, size_t nbytes, void *data) {
     int error_code = send_message(actor_id_self(), message);
     assert(error_code == 0);
 
-    message_t second_message = {
-    };
+    if (!first_actor) {
+        message = (message_t) {
+                .message_type = MSG_CLEAN,
+                .nbytes = 0,
+                .data = NULL
+        };
 
-
-    free(*stateptr);
+        error_code = send_message(parent_id, message);
+        assert(error_code == 0);
+    }
 }
 
 // Allocates memory for first actor.
@@ -219,7 +233,7 @@ int main() {
 
 
     printf("MAIN THREAD SLEEP\n");
-    sleep(3000);
+//    sleep(3000);
     actor_system_join(actor_id);
     printf("THIS SHOULD BE LAST MESSAGE\n");
 

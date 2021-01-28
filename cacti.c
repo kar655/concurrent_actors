@@ -64,6 +64,9 @@ typedef struct actors_system {
 
     // Keep working until all actors died or signal was sent.
     bool keep_working;
+
+//    // Number of threads that are still working.
+//    size_t working_threads;
 } actors_system_t;
 
 // DATA =======================================================================
@@ -73,6 +76,9 @@ static actors_system_t *actors_pool = NULL;
 
 // Thread local variable of current actor being processed.
 static __thread actor_id_t thread_actor_id = -1;
+
+// Mutex for waiting in actor_system_join.
+static pthread_mutex_t wait_for_end;
 
 // DECLARATIONS ===============================================================
 static message_t *copy_message(message_t message);
@@ -226,10 +232,17 @@ static void init_actors_system() {
     actors_pool->waiting_for_actor = 0;
     actors_pool->first_empty = 0;
     actors_pool->keep_working = true;
+//    actors_pool->working_threads = POOL_SIZE;
 
     actors_pool->actors_queue = (actor_queue_t *) malloc(sizeof(actor_queue_t));
 
     int error_code;
+
+    error_code = pthread_mutex_init(&wait_for_end, NULL);
+    assert(error_code == 0);
+    error_code = pthread_mutex_lock(&wait_for_end);
+    assert(error_code == 0);
+
 
     error_code = pthread_mutex_init(&actors_pool->mutex, NULL);
     assert(error_code == 0);
@@ -258,13 +271,6 @@ static void destroy_actors_system() {
     printf("Starting destroy\n");
     int error_code;
 
-    error_code = pthread_cond_destroy(&actors_pool->wait_for_actor);
-    assert(error_code == 0);
-
-    error_code = pthread_mutex_destroy(&actors_pool->mutex);
-    assert(error_code == 0);
-
-    // todo join na poczatku?
     for (size_t thread = 0; thread < POOL_SIZE; ++thread) {
         void *thread_result;
         error_code = pthread_join(actors_pool->threads[thread], &thread_result);
@@ -272,15 +278,27 @@ static void destroy_actors_system() {
         printf("Deleting %zu thread\n", thread);
     }
 
+    error_code = pthread_cond_destroy(&actors_pool->wait_for_actor);
+    assert(error_code == 0);
+
+    error_code = pthread_mutex_destroy(&actors_pool->mutex);
+    assert(error_code == 0);
+
+
     // Free memory allocated for actors.
     for (size_t actor = 0; actor < actors_pool->first_empty; ++actor) {
         free(actors_pool->actors_data[actor]->messages_queue);
+        free(actors_pool->actors_data[actor]->state);
         free(actors_pool->actors_data[actor]);
     }
 
     free(actors_pool->actors_queue);
     free(actors_pool);
     actors_pool = NULL;
+
+    error_code = pthread_mutex_unlock(&wait_for_end);
+    assert(error_code == 0);
+
     printf("Finish destroy\n");
 }
 
@@ -314,8 +332,13 @@ void perform_message(actor_t *current_actor, message_t *message) {
 
         message_t new_message = {
                 .message_type = MSG_HELLO,
-                .nbytes = sizeof(actor_id_t *),
-                .data = (void *) &current_actor->id}; // todo czy z &?
+                .nbytes = sizeof(actor_id_t),
+                .data = (void *) current_actor->id};
+
+//        message_t new_message = {
+//                .message_type = MSG_HELLO,
+//                .nbytes = sizeof(actor_id_t *),
+//                .data = (void *) &current_actor->id};
 
         // Sends hello message to new actor.
         send_message(new_actor, new_message);
@@ -327,7 +350,6 @@ void perform_message(actor_t *current_actor, message_t *message) {
         if (actors_pool->living_actors == 0) {
             printf("SYSTEM SHOULD DIE!\n");
             actors_pool->keep_working = false;
-            assert(false);
         }
 
         current_actor->is_dead = true;
@@ -347,6 +369,7 @@ void perform_message(actor_t *current_actor, message_t *message) {
 
 // Thread work loop.
 static void *thread_loop(void *d) {
+    (void) d; // not unused
     int error_code;
 
     do {
@@ -382,7 +405,18 @@ static void *thread_loop(void *d) {
     } while (actors_pool->keep_working);
 
     printf("----------------THREAD LEAVING LOOP----------------\n");
-    // todo
+
+
+//    lock_mutex();
+//    actors_pool->working_threads--;
+//    if (actors_pool->working_threads == 0) {
+//        unlock_mutex();
+//        destroy_actors_system();
+//    }
+//    else {
+//        unlock_mutex();
+//    }
+
     return NULL;
 }
 
@@ -411,8 +445,12 @@ int actor_system_create(actor_id_t *actor, role_t *const role) {
 // stworzenie nowego pierwszego aktora za pomocą actor_system_create. W szczególności taka
 // sekwencja nie powinna prowadzić do wycieku pamięci.
 void actor_system_join(actor_id_t actor) {
-    fflush(stdout);
+    (void) actor; // not unused
     destroy_actors_system();
+//    int error_code = pthread_mutex_lock(&wait_for_end);
+//    assert(error_code == 0);
+//    error_code = pthread_mutex_destroy(&wait_for_end);
+//    assert(error_code == 0);
 }
 
 // Sends message to certain actor.
