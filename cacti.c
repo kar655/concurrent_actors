@@ -64,9 +64,6 @@ typedef struct actors_system {
 
     // Keep working until all actors died or signal was sent.
     bool keep_working;
-
-//    // Number of threads that are still working.
-//    size_t working_threads;
 } actors_system_t;
 
 // DATA =======================================================================
@@ -77,26 +74,30 @@ static actors_system_t *actors_pool = NULL;
 // Thread local variable of current actor being processed.
 static __thread actor_id_t thread_actor_id = -1;
 
-// Mutex for waiting in actor_system_join.
-static pthread_mutex_t wait_for_end;
-
 // DECLARATIONS ===============================================================
 static message_t *copy_message(message_t message);
 
 static void lock_mutex();
+
 static void unlock_mutex();
+
 static void signal_wait_for_actor();
 
 static message_t *get_message(cyclic_queue_t *queue);
-static void add_message(actor_id_t actor_id, cyclic_queue_t *queue, message_t *message);
+
+static void add_message(actor_id_t actor_id, cyclic_queue_t *queue,
+                        message_t *message);
 
 static void queue_add_actor(actor_queue_t *queue, actor_id_t actor);
+
 static actor_id_t queue_get_actor(actor_queue_t *queue);
 
 static void init_actors_system();
+
 static void destroy_actors_system();
 
 static void add_actor(actor_id_t *actor_id, role_t *const role);
+
 void perform_message(actor_t *current_actor, message_t *message);
 
 static void *thread_loop(void *d);
@@ -149,7 +150,8 @@ static message_t *get_message(cyclic_queue_t *queue) {
 
 // Adds new_message to actor's event queue.
 // Unlocks mutex.
-static void add_message(actor_id_t actor_id, cyclic_queue_t *queue, message_t *message) {
+static void add_message(actor_id_t actor_id, cyclic_queue_t *queue,
+                        message_t *message) {
     if (queue->current_size == ACTOR_QUEUE_LIMIT) {
         // Current queue is full.
         assert(false); // todo remove this
@@ -198,7 +200,8 @@ static void queue_add_actor(actor_queue_t *queue, actor_id_t actor) {
 
     // Some threads are waiting for actors.
     if (actors_pool->waiting_for_actor > 0) {
-        printf("thread should wake up! %lu threads are waiting\n", actors_pool->waiting_for_actor);
+        printf("thread should wake up! %lu threads are waiting\n",
+               actors_pool->waiting_for_actor);
         signal_wait_for_actor();
     }
     else {
@@ -232,17 +235,10 @@ static void init_actors_system() {
     actors_pool->waiting_for_actor = 0;
     actors_pool->first_empty = 0;
     actors_pool->keep_working = true;
-//    actors_pool->working_threads = POOL_SIZE;
 
     actors_pool->actors_queue = (actor_queue_t *) malloc(sizeof(actor_queue_t));
 
     int error_code;
-
-    error_code = pthread_mutex_init(&wait_for_end, NULL);
-    assert(error_code == 0);
-    error_code = pthread_mutex_lock(&wait_for_end);
-    assert(error_code == 0);
-
 
     error_code = pthread_mutex_init(&actors_pool->mutex, NULL);
     assert(error_code == 0);
@@ -296,9 +292,6 @@ static void destroy_actors_system() {
     free(actors_pool);
     actors_pool = NULL;
 
-    error_code = pthread_mutex_unlock(&wait_for_end);
-    assert(error_code == 0);
-
     printf("Finish destroy\n");
 }
 
@@ -333,12 +326,8 @@ void perform_message(actor_t *current_actor, message_t *message) {
         message_t new_message = {
                 .message_type = MSG_HELLO,
                 .nbytes = sizeof(actor_id_t),
-                .data = (void *) current_actor->id};
-
-//        message_t new_message = {
-//                .message_type = MSG_HELLO,
-//                .nbytes = sizeof(actor_id_t *),
-//                .data = (void *) &current_actor->id};
+                .data = (void *) current_actor->id
+        };
 
         // Sends hello message to new actor.
         send_message(new_actor, new_message);
@@ -354,6 +343,7 @@ void perform_message(actor_t *current_actor, message_t *message) {
 
         current_actor->is_dead = true;
 
+        // todo clear messages
         unlock_mutex();
         return;
     }
@@ -372,7 +362,7 @@ static void *thread_loop(void *d) {
     (void) d; // not unused
     int error_code;
 
-    do {
+    while (actors_pool->keep_working) {
         lock_mutex();
 
         // Sleep when there are no actors.
@@ -402,20 +392,9 @@ static void *thread_loop(void *d) {
         printf("Watek koncze prace z aktorem: %zu\n", current_actor_id);
         thread_actor_id = -1;
 
-    } while (actors_pool->keep_working);
+    }
 
     printf("----------------THREAD LEAVING LOOP----------------\n");
-
-
-//    lock_mutex();
-//    actors_pool->working_threads--;
-//    if (actors_pool->working_threads == 0) {
-//        unlock_mutex();
-//        destroy_actors_system();
-//    }
-//    else {
-//        unlock_mutex();
-//    }
 
     return NULL;
 }
@@ -440,17 +419,9 @@ int actor_system_create(actor_id_t *actor, role_t *const role) {
     return 0;
 }
 
-// Wywołanie actor_system_join(someact) powoduje oczekiwanie na zakończenie działania systemu
-// aktorów, do którego należy aktor someact. Po tym wywołaniu powinno być możliwe poprawne
-// stworzenie nowego pierwszego aktora za pomocą actor_system_create. W szczególności taka
-// sekwencja nie powinna prowadzić do wycieku pamięci.
 void actor_system_join(actor_id_t actor) {
     (void) actor; // not unused
     destroy_actors_system();
-//    int error_code = pthread_mutex_lock(&wait_for_end);
-//    assert(error_code == 0);
-//    error_code = pthread_mutex_destroy(&wait_for_end);
-//    assert(error_code == 0);
 }
 
 // Sends message to certain actor.
