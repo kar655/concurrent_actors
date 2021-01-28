@@ -5,6 +5,12 @@
 #include <pthread.h>
 #include <stdio.h> // todo
 
+static message_t *copy_message(message_t message) {
+    message_t *copied = (message_t *) malloc(sizeof(message));
+    *copied = message;
+
+    return copied;
+}
 
 // Cyclic queue of actors' events.
 typedef struct cyclic_queue {
@@ -43,7 +49,7 @@ typedef struct actor {
     bool is_dead;
     cyclic_queue_t *messages_queue;
     role_t *role;
-    void **state; // TODO cos takiego?
+    void *state; // TODO cos takiego?
 
 } actor_t;
 
@@ -291,7 +297,7 @@ void perform_message(actor_t *current_actor, message_t *message) {
     }
     else {
         current_actor->role->prompts[message->message_type](
-                current_actor->state, message->nbytes, message->data);
+                &current_actor->state, message->nbytes, message->data);
     }
 }
 
@@ -306,7 +312,7 @@ void *thread_loop(void *d) {
         while (actors_pool->actors_queue->current_size == 0) {
             actors_pool->waiting_for_actor++;
 
-            printf("THREAD SLEEP\n");
+            printf("THREAD SLEEP releasing mutex\n");
             error_code = pthread_cond_wait(&actors_pool->wait_for_actor, &actors_pool->mutex);
             assert(error_code == 0);
             printf("THREAD WOKE UP\n");
@@ -391,7 +397,7 @@ int send_message(actor_id_t actor, message_t message) {
     }
 
     // queue_add_message unlocks mutex.
-    queue_add_message(actor, receiving_actor->messages_queue, &message);
+    queue_add_message(actor, receiving_actor->messages_queue, copy_message(message));
 
     return 0;
 }
