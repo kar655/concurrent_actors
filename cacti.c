@@ -102,7 +102,11 @@ typedef struct actors_system {
 // -----------------------------------------------------------------------------------------
 // Global data structure maintaining actors.
 static actors_system_t *actors_pool = NULL;
+static __thread actor_id_t thread_actor_id = -1;
 // -----------------------------------------------------------------------------------------
+
+static void signal_wait_for_actor();
+static void unlock_mutex();
 
 // Adds actor to actor_queue.
 static void queue_add_actor(actor_queue_t *queue, actor_id_t actor) {
@@ -120,6 +124,14 @@ static void queue_add_actor(actor_queue_t *queue, actor_id_t actor) {
     queue->current_size++;
     queue->actors[queue->first_empty] = actor;
     queue->first_empty = (queue->first_empty + 1) % CAST_LIMIT;
+
+    // Some threads are waiting for actors.
+    if (actors_pool->waiting_for_actor > 0) {
+        printf("thread should wake up! %lu threads are waiting\n", actors_pool->waiting_for_actor);
+        signal_wait_for_actor();
+        return;
+    }
+    unlock_mutex();
 }
 
 // Return first actor's id from queue.
@@ -173,19 +185,20 @@ static void queue_add_message(actor_id_t actor_id, cyclic_queue_t *queue, messag
 
 
     // If this is my first message.
-    if (queue->current_size > 1) {
+    if (queue->current_size > 0) {
         // First message -> adding to actors_queue
         queue_add_actor(actors_pool->actors_queue, actor_id);
 
-        // Some threads are waiting for actors.
-        if (actors_pool->waiting_for_actor > 0) {
-            printf("thread should wake up! %lu threads are waiting\n", actors_pool->waiting_for_actor);
-            signal_wait_for_actor();
-            return;
-        }
+//        // Some threads are waiting for actors.
+//        if (actors_pool->waiting_for_actor > 0) {
+//            printf("thread should wake up! %lu threads are waiting\n", actors_pool->waiting_for_actor);
+//            signal_wait_for_actor();
+//            return;
+//        }
     }
-
-    unlock_mutex();
+    else {
+        unlock_mutex();
+    }
 }
 
 
@@ -318,7 +331,7 @@ void perform_message(actor_t *current_actor, message_t *message) {
     lock_mutex();
     // Tries to requeue actor.
     queue_add_actor(actors_pool->actors_queue, current_actor->id);
-    unlock_mutex();
+//    unlock_mutex();
 }
 
 // Thread work loop.
@@ -349,10 +362,12 @@ void *thread_loop(void *d) {
         unlock_mutex();
 
         printf("Watek rozpoczynam prace z aktorem: %zu\n", current_actor_id);
+        thread_actor_id = current_actor_id;
 
         perform_message(current_actor, queue_get_message(current_actor->messages_queue));
 
         printf("Watek koncze prace z aktorem: %zu\n", current_actor_id);
+        thread_actor_id = -1;
 
     } while (actors_pool->keep_working);
 
@@ -365,8 +380,7 @@ void *thread_loop(void *d) {
 
 // Returns current actor's id.
 actor_id_t actor_id_self() {
-    // todo
-    return 0;
+    return thread_actor_id;
 }
 
 // Pulę wątków należy zaimplementować jako sposób wewnętrznej organizacji systemu aktorów.
