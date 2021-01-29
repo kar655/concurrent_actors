@@ -1,67 +1,86 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdbool.h>
 #include <assert.h>
 #include <unistd.h>
 #include "cacti.h"
 
-#define MSG_INIT (message_type_t)0x1
-#define MSG_WAIT (message_type_t)0x2
-#define MSG_DATA (message_type_t)0x3
-#define MSG_SUM (message_type_t)0x4
+// Overloading MSG_SUM for admin and normal actor.
+#define MSG_SUM (message_type_t)0x1
 
-role_t admin_role;
+// Admin actor's messages.
+#define MSG_INIT (message_type_t)0x2
+#define MSG_WAIT (message_type_t)0x3
 
-// All actors will share same role.
-role_t actor_role;
+// Calculating actors' messages.
+#define MSG_DATA (message_type_t)0x2
 
 
+// Role of admin actor making calculating actors.
+static role_t admin_role;
+
+// Role of actor calculating values in matrix.
+static role_t actor_role;
+
+// Structure for storing calculation information.
 typedef struct {
+    // Calculated sum.
     long sum;
+
+    // Row number of calculated sum.
     int row_number;
 } calculating_t;
 
-// Each actor gets corresponding column and times to calculate values.
+// Each calculating actor gets column and times to calculate values.
 typedef struct {
+    // Sends calculated sum to parent_id.
     actor_id_t parent_id;
-    bool is_last;
+
+    // Number of calculated values.
     int already_calculated;
+
+    // Number of rows.
     int row_number;
+
+    // Corresponding column.
     int *column_values;
+
+    // Corresponding waiting times.
     int *column_times;
 } actor_state_t;
 
+// State of admin actor.
 typedef struct {
+    // Stores id of most recent actor who sent MSG_WAIT to admin.
     actor_id_t previous_id;
+
+    // Which column current actor will get.
     int current_column;
+
+    // Number of columns.
     int column_number;
+
+    // Number of rows.
     int row_number;
+
+    // All columns.
     int **columns;
+
+    // All waiting times.
     int **times;
 
+    // Number of calculated values.
     int already_calculated;
-    // Array of calculated sums
+
+    // Array of calculated sums.
     long *calculated_sums;
 } initial_message_t;
 
-void print_column(int *column, int rows) {
-    for (int i = 0; i < rows; ++i) {
-        printf("%d ", column[i]);
-    }
-
-    printf("\n");
-}
-
 // Hello message handler.
-// Saves parent's id and sends MSG_WAIT to parent.
+// Messages admin to get column.
 void message_hello(void **stateptr, size_t nbytes, void *data) {
     (void) stateptr;
     (void) nbytes;
     actor_id_t admin_id = (actor_id_t) data;
-
-//    actor_state_t *current_state =
-//            (actor_state_t *) malloc(sizeof(actor_state_t));
-//    *stateptr = (void *) current_state;
 
     message_t message = {
             .message_type = MSG_WAIT,
@@ -76,23 +95,12 @@ void message_hello(void **stateptr, size_t nbytes, void *data) {
 // Creating admin node.
 void message_init(void **stateptr, size_t nbytes, void *data) {
     (void) nbytes;
-//    (void) data;
-//
-//    actor_state_t *current_state =
-//            (actor_state_t *) malloc(sizeof(actor_state_t));
-//
-//    current_state->parent_id = -1;
-//    *stateptr = (void *) current_state;
-//
-//    // i tu message data ?
-
-
 
     initial_message_t *initial_data = (initial_message_t *) data;
-    *stateptr = (void *) initial_data; // todo ??
+    *stateptr = (void *) initial_data;
 
     // Create all necessary actors.
-    for (int i = 0; i < initial_data->column_number; ++i) {
+    for (int column = 0; column < initial_data->column_number; ++column) {
         message_t message = {
                 .message_type = MSG_SPAWN,
                 .nbytes = sizeof(role_t *),
@@ -104,28 +112,26 @@ void message_init(void **stateptr, size_t nbytes, void *data) {
     }
 }
 
-// In admin node
+// Admin actor creates next calculating actor state.
+// If all actors are initialized calls first actor to start calculating.
 void message_wait(void **stateptr, size_t nbytes, void *data) {
     (void) nbytes;
     actor_id_t actor_id = (actor_id_t) data;
 
     initial_message_t *initial_data = (initial_message_t *) *stateptr;
 
-    bool is_last = initial_data->current_column + 1 == initial_data->column_number;
-
     // Last actor sends results to admin actor.
-    if (is_last) {
+    if (initial_data->current_column + 1 == initial_data->column_number) {
         initial_data->previous_id = actor_id_self();
     }
 
     actor_state_t *next_state = (actor_state_t *) malloc(sizeof(actor_state_t));
     *next_state = (actor_state_t) {
             .parent_id = initial_data->previous_id,
-            .is_last = is_last,
             .already_calculated = 0,
             .row_number = initial_data->row_number,
             .column_values = initial_data->columns[initial_data->current_column],
-            .column_times = initial_data->columns[initial_data->current_column]
+            .column_times = initial_data->times[initial_data->current_column]
     };
 
     message_t message = {
@@ -140,15 +146,15 @@ void message_wait(void **stateptr, size_t nbytes, void *data) {
     initial_data->current_column--;
     initial_data->previous_id = actor_id;
 
-    // Each column has corresponding actor, start calculating.
+    // If each column has corresponding actor, start calculating.
     if (initial_data->current_column == -1) {
-        for (int i = 0; i < initial_data->row_number; ++i) {
+        for (int row = 0; row < initial_data->row_number; ++row) {
             calculating_t *current_calculation =
                     (calculating_t *) malloc(sizeof(calculating_t));
 
-            // 0 is neutral value
+            // 0 is neutral start value.
             *current_calculation = (calculating_t) {
-                    .row_number = i,
+                    .row_number = row,
                     .sum = 0,
             };
 
@@ -164,31 +170,28 @@ void message_wait(void **stateptr, size_t nbytes, void *data) {
     }
 }
 
-// Loads data
+// Saves sent data as actor's state.
 void message_data(void **stateptr, size_t nbytes, void *data) {
+    (void) nbytes;
     *stateptr = data;
-    // XD todo ???
 }
 
 // Signals actor to start calculating
 // Passed data is calculating_t
 void message_sum(void **stateptr, size_t nbytes, void *data) {
+    (void) nbytes;
     actor_state_t *current_state = (actor_state_t *) *stateptr;
     calculating_t *current_calculation = (calculating_t *) data;
 
-    printf("SLEEPING FOR %d\n", current_state->column_times[current_calculation->row_number]);
+    printf("SLEEPING FOR %d\n",
+           current_state->column_times[current_calculation->row_number] / 1000);
+    // Sleep for given time.
     usleep(current_state->column_times[current_calculation->row_number]);
 
     current_state->already_calculated++;
     current_calculation->sum +=
             current_state->column_values[current_calculation->row_number];
 
-    if (current_state->is_last) {
-        // todo jakies inne wysylanie do admina
-        printf("suma wyliczona dla row %d jest %ld\n",
-               current_calculation->row_number, current_calculation->sum);
-    }
-//    else {
     message_t message = {
             .message_type = MSG_SUM,
             .nbytes = sizeof(calculating_t *),
@@ -197,33 +200,34 @@ void message_sum(void **stateptr, size_t nbytes, void *data) {
 
     int error_code = send_message(current_state->parent_id, message);
     assert(error_code == 0);
-//    }
 
+    // There will be no more calculations.
     if (current_state->already_calculated == current_state->row_number) {
-        message_t message = {
+        message = (message_t) {
                 .message_type = MSG_GODIE,
                 .nbytes = 0,
                 .data = NULL
         };
 
-        free(current_state);
         error_code = send_message(actor_id_self(), message);
         assert(error_code == 0);
+        free(current_state);
     }
 }
 
+// Admin actor gets calculated sums, prints and destroys them.
 void message_sum_admin(void **stateptr, size_t nbytes, void *data) {
     (void) nbytes;
-    printf("--------------------------------------------------------------\n");
     initial_message_t *admin_data = (initial_message_t *) *stateptr;
     calculating_t *current_calculation = (calculating_t *) data;
 
     admin_data->already_calculated++;
-    admin_data->calculated_sums[current_calculation->row_number] = current_calculation->sum;
+    admin_data->calculated_sums[current_calculation->row_number] =
+            current_calculation->sum;
 
     free(current_calculation);
 
-    // Last missing sum.
+    // All sums are calculated.
     if (admin_data->already_calculated == admin_data->row_number) {
         for (int row = 0; row < admin_data->row_number; ++row) {
             printf("%ld\n", admin_data->calculated_sums[row]);
@@ -241,7 +245,7 @@ void message_sum_admin(void **stateptr, size_t nbytes, void *data) {
 }
 
 int main() {
-    int k, n; // rows, columns  2, 3
+    int k, n; // rows, columns
     scanf("%d", &k);
     scanf("%d", &n);
 
@@ -257,27 +261,27 @@ int main() {
     for (int row = 0; row < k; ++row) {
         for (int column = 0; column < n; ++column) {
             scanf("%d %d", &values[column][row], &times[column][row]);
+            // Microseconds to milliseconds conversion.
+            times[column][row] *= 1000;
         }
     }
 
     int error_code;
     actor_id_t actor_id = -1;
 
-    actor_role.nprompts = 5;
+    actor_role.nprompts = 3;
     actor_role.prompts = (act_t[]) {
             message_hello,
-            message_init,
-            message_wait,
-            message_data,
-            message_sum
+            message_sum,
+            message_data
     };
-    admin_role.nprompts = 5;
+
+    admin_role.nprompts = 4;
     admin_role.prompts = (act_t[]) {
-            message_hello,
+            NULL,
+            message_sum_admin,
             message_init,
-            message_wait,
-            message_data,
-            message_sum_admin
+            message_wait
     };
 
     error_code = actor_system_create(&actor_id, &admin_role);
@@ -286,14 +290,14 @@ int main() {
     initial_message_t *initial_message =
             (initial_message_t *) malloc(sizeof(initial_message_t));
     *initial_message = (initial_message_t) {
-            .previous_id = -2137,
+            .previous_id = -1,
             .current_column = n - 1,
             .column_number = n,
             .row_number = k,
             .columns = values,
             .times = times,
             .already_calculated = 0,
-            .calculated_sums = (long *) malloc(n * sizeof(long))
+            .calculated_sums = (long *) malloc(k * sizeof(long))
     };
 
     message_t message = {
@@ -312,9 +316,11 @@ int main() {
         free(values[column]);
         free(times[column]);
     }
+
     free(values);
     free(times);
     free(initial_message->calculated_sums);
     free(initial_message);
+
     return 0;
 }
