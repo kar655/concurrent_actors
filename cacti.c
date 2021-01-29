@@ -7,7 +7,7 @@
 
 // STRUCTS ====================================================================
 
-#define printf(...) void
+//#define printf(...) void
 
 // Cyclic queue of actors' events.
 typedef struct cyclic_queue {
@@ -25,8 +25,7 @@ typedef struct actor {
     bool in_queue;
     cyclic_queue_t *messages_queue;
     role_t *role;
-    void *state; // TODO cos takiego?
-
+    void *state;
 } actor_t;
 
 // Queue of actors waiting for free thread.
@@ -153,7 +152,6 @@ static message_t *get_message(cyclic_queue_t *queue) {
 }
 
 // Adds new_message to actor's event queue.
-// Unlocks mutex.
 static void add_message(actor_id_t actor_id, cyclic_queue_t *queue,
                         message_t *message) {
     if (queue->current_size == ACTOR_QUEUE_LIMIT) {
@@ -166,19 +164,11 @@ static void add_message(actor_id_t actor_id, cyclic_queue_t *queue,
     queue->messages[queue->first_empty] = message;
     queue->first_empty = (queue->first_empty + 1) % ACTOR_QUEUE_LIMIT;
 
-
-    // If this is my first message.
-    if (queue->current_size > 0) {
-        // First message -> adding to actors_queue
-        queue_add_actor(actors_pool->actors_queue, actor_id);
-    }
-    else {
-        unlock_mutex();
-    }
+    // Adds actor to actors queue if its not already added.
+    queue_add_actor(actors_pool->actors_queue, actor_id);
 }
 
 // Adds actor to actor_queue.
-// Unlocks mutex.
 static void queue_add_actor(actor_queue_t *queue, actor_id_t actor) {
     if (queue->current_size == CAST_LIMIT) {
         // actor_queue is full.
@@ -187,12 +177,13 @@ static void queue_add_actor(actor_queue_t *queue, actor_id_t actor) {
 
     if (actors_pool->actors_data[actor]->in_queue) {
         printf("ACTOR ALREADY IN QUEUE!!!!! MUST HAVE BEEN ADDED EARLIER\n");
-        unlock_mutex();
         return;
     }
     else if (actors_pool->actors_data[actor]->messages_queue->current_size == 0) {
         printf("ACTOR DOESNT HAVE ANY MESSAGE - NOT ADDED\n");
-        unlock_mutex();
+        return;
+    } else if (actors_pool->actors_data[actor]->is_dead) {
+        printf("---dead actor\n");
         return;
     }
 
@@ -207,9 +198,6 @@ static void queue_add_actor(actor_queue_t *queue, actor_id_t actor) {
         printf("thread should wake up! %lu threads are waiting\n",
                actors_pool->waiting_for_actor);
         signal_wait_for_actor();
-    }
-    else {
-        unlock_mutex();
     }
 }
 
@@ -226,8 +214,14 @@ static actor_id_t queue_get_actor(actor_queue_t *queue) {
     queue->first_full = (queue->first_full + 1) % CAST_LIMIT;
 
     assert(actors_pool->actors_data[result]->in_queue);
-    actors_pool->actors_data[result]->in_queue = false;
+    // TODO BLOKUJE DODAWANIE DOPOKI NIE PRZETWORZE WIADOMOSCI
+//    actors_pool->actors_data[result]->in_queue = false;
 
+    // tak chyba nie jest, ale musi byc???
+    // ale chce zeby tak bylo !
+    // nie dodaje aktora do kolejki aktorow dopóki nie skończe aktualnego zlecenia
+    // a jesli aktualnym zleceniem jest MSG_GODIE to nie powinienem dodawac kolejny raz
+    assert(!actors_pool->actors_data[result]->is_dead); // todo
     return result;
 }
 
@@ -258,7 +252,7 @@ static void init_actors_system() {
     error_code = pthread_cond_init(&actors_pool->wait_for_actor, NULL);
     assert(error_code == 0);
 
-    lock_mutex();
+    lock_mutex(); // todo czy potrzebne?
     // Creating threads with default attr.
     for (size_t thread = 0; thread < POOL_SIZE; ++thread) {
         error_code = pthread_create(&actors_pool->threads[thread],
@@ -310,10 +304,14 @@ static void add_actor(actor_id_t *actor_id, role_t *const role) {
     *actor_id = actors_pool->first_empty;
 
     actors_pool->actors_data[*actor_id] = (actor_t *) malloc(sizeof(actor_t));
-    actors_pool->actors_data[*actor_id]->role = role;
-    actors_pool->actors_data[*actor_id]->id = *actor_id;
-    actors_pool->actors_data[*actor_id]->is_dead = false;
-    actors_pool->actors_data[*actor_id]->in_queue = false;
+    (*actors_pool->actors_data[*actor_id]) = (actor_t) {
+        .id = *actor_id,
+        .is_dead = false,
+        .in_queue = false,
+        .role = role,
+        .state = NULL
+    };
+
     actors_pool->actors_data[*actor_id]->messages_queue =
             (cyclic_queue_t *) malloc(sizeof(cyclic_queue_t));
 
@@ -339,11 +337,9 @@ static void clear_actor(actor_t *actor) {
 
 // Performs first message of given actor.
 void perform_message(actor_t *current_actor, message_t *message) {
-    printf("IN PERFORMING MESSAGE!!!! Got message = %ld\n", message->message_type);
+//    printf("IN PERFORMING MESSAGE!!!! Got message = %ld\n", message->message_type);
 
     if (message->message_type == MSG_SPAWN) {
-        printf("MSG_SPAWN!!\n");
-
         // Data field is the new role.
         actor_id_t new_actor;
         add_actor(&new_actor, message->data);
@@ -368,7 +364,6 @@ void perform_message(actor_t *current_actor, message_t *message) {
 
         current_actor->is_dead = true;
 
-        // todo clear messages
         unlock_mutex();
         free(message);
         return;
@@ -380,8 +375,10 @@ void perform_message(actor_t *current_actor, message_t *message) {
 
     free(message);
     lock_mutex();
-    // Tries to requeue actor, this unlocks mutex.
+    current_actor->in_queue = false; // TODO ???
+    // Tries to requeue actor.
     queue_add_actor(actors_pool->actors_queue, current_actor->id);
+    unlock_mutex();
 }
 
 // Thread work loop.
@@ -389,11 +386,10 @@ static void *thread_loop(void *d) {
     (void) d; // not unused
     int error_code;
 
+    lock_mutex();
     while (actors_pool->keep_working) {
-        lock_mutex();
-
         // Sleep when there are no actors.
-        while (actors_pool->actors_queue->current_size == 0) {
+        while (actors_pool->actors_queue->current_size == 0 && actors_pool->keep_working) {
             actors_pool->waiting_for_actor++;
 
             printf("THREAD SLEEP releasing mutex\n");
@@ -402,6 +398,11 @@ static void *thread_loop(void *d) {
             printf("THREAD WOKE UP\n");
 
             actors_pool->waiting_for_actor--;
+
+        }
+        if (!actors_pool->keep_working) {
+            printf("AWARYJNE WYSCIE !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n");
+            break;
         }
         printf("THREAD ACTION\n");
 
@@ -419,9 +420,18 @@ static void *thread_loop(void *d) {
         printf("Watek koncze prace z aktorem: %zu\n", current_actor_id);
         thread_actor_id = -1;
 
+        lock_mutex();
     }
+    // Thread leaves with mutex.
 
     printf("----------------THREAD LEAVING LOOP----------------\n");
+
+    // Job here is done, wake other threads.
+    if (actors_pool->waiting_for_actor > 0) {
+        printf("POMOCNICZNE === BUDZENIE\n");
+        signal_wait_for_actor();
+    }
+    unlock_mutex();
 
     return NULL;
 }
@@ -430,6 +440,7 @@ static void *thread_loop(void *d) {
 
 // Returns current actor's id.
 actor_id_t actor_id_self() {
+    assert(thread_actor_id != -1);
     return thread_actor_id;
 }
 
@@ -470,8 +481,8 @@ int send_message(actor_id_t actor, message_t message) {
         return -1;
     }
 
-    // add_message unlocks mutex.
     add_message(actor, receiving_actor->messages_queue, copy_message(message));
 
+    unlock_mutex();
     return 0;
 }

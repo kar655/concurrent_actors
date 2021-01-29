@@ -60,7 +60,7 @@ void message_hello(void **stateptr, size_t nbytes, void *data) {
 }
 
 // Calculates factorial. If not finished makes new actor.
-// Data is next_factorial state
+// Passed data is next_factorial state
 void calculate_factorial(void **stateptr, size_t nbytes, void *data) {
     (void) nbytes;
     printf("IN CALCULATE FACTORIAL\n");
@@ -68,6 +68,7 @@ void calculate_factorial(void **stateptr, size_t nbytes, void *data) {
     factorial_info_t *current_state = (factorial_info_t *) *stateptr;
     factorial_info_t *current_factorial = (factorial_info_t *) data;
 
+    // Copy all except parent_id.
     actor_id_t parent_id = current_state->parent_id;
     *current_state = *current_factorial;
     current_state->parent_id = parent_id;
@@ -101,7 +102,7 @@ void calculate_factorial(void **stateptr, size_t nbytes, void *data) {
 
 // When factorial is not finished new actor calls
 // this to its parent to get last factorial state.
-// Parent sends next factorial state to actor with id in *data.
+// Parent sends next factorial state to actor with id in data.
 void son_waiting_for_factorial(void **stateptr, size_t nbytes, void *data) {
     (void) nbytes;
     printf("IN WAIT MESSAGE\n");
@@ -150,6 +151,7 @@ void clean_up(void **stateptr, size_t nbytes, void *data) {
     int error_code = send_message(actor_id_self(), message);
     assert(error_code == 0);
 
+    // Stop recursion.
     if (!first_actor) {
         message = (message_t) {
                 .message_type = MSG_CLEAN,
@@ -163,7 +165,7 @@ void clean_up(void **stateptr, size_t nbytes, void *data) {
 }
 
 // Allocates memory for first actor.
-// Waits for sending calculate factorial.
+// Makes actor ready for receiving calculate factorial.
 // data is NULL
 void initial_message(void **stateptr, size_t nbystes, void *data) {
     printf("IN INIT MESSAGE!\n");
@@ -183,8 +185,6 @@ int main() {
     big_int n = 5;
     printf("brute_factorial(%lld) = %lld\n", n, brute_factorial(n));
 
-    printf("Teraz aktorzy xD!\n");
-
     int error_code;
     actor_id_t actor_id = -1;
 
@@ -198,8 +198,6 @@ int main() {
 
     error_code = actor_system_create(&actor_id, &actor_role);
     assert(error_code == 0);
-
-    printf("First actor id = %ld\n", actor_id);
 
     // Is initialized as actor data and freed by MSG_CLEAN.
     factorial_info_t *initial_factorial =
@@ -220,7 +218,6 @@ int main() {
     error_code = send_message(actor_id, message);
     assert(error_code == 0);
 
-
     message = (message_t) {
             .message_type = MSG_CALCULATE,
             .nbytes = sizeof(factorial_info_t *),
@@ -230,9 +227,6 @@ int main() {
     error_code = send_message(actor_id, message);
     assert(error_code == 0);
 
-
-    printf("MAIN THREAD SLEEP\n");
     actor_system_join(actor_id);
-    printf("THIS SHOULD BE LAST MESSAGE\n");
     return 0;
 }
