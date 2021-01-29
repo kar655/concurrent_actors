@@ -10,21 +10,10 @@
 #define MSG_INIT (message_type_t)0x4
 
 // All actors will share same role.
-role_t actor_role;
+static role_t actor_role;
 
 // Type for storing factorial.
 typedef unsigned long long big_int;
-
-// todo remove
-big_int brute_factorial(big_int n) {
-    big_int result = 1;
-
-    for (big_int i = 2; i <= n; ++i) {
-        result *= i;
-    }
-
-    return result;
-}
 
 // Actor's state data.
 typedef struct {
@@ -34,10 +23,9 @@ typedef struct {
     big_int last_step; // n -> n
 } factorial_info_t;
 
-
 // Hello message handler.
 // Saves parent's id and sends MSG_WAIT to parent.
-void message_hello(void **stateptr, size_t nbytes, void *data) {
+static void message_hello(void **stateptr, size_t nbytes, void *data) {
     (void) nbytes;
     actor_id_t parent_id = (actor_id_t) data;
 
@@ -61,7 +49,7 @@ void message_hello(void **stateptr, size_t nbytes, void *data) {
 
 // Calculates factorial. If not finished makes new actor.
 // Passed data is next_factorial state
-void calculate_factorial(void **stateptr, size_t nbytes, void *data) {
+static void message_calculate(void **stateptr, size_t nbytes, void *data) {
     (void) nbytes;
 
     factorial_info_t *current_state = (factorial_info_t *) *stateptr;
@@ -73,8 +61,6 @@ void calculate_factorial(void **stateptr, size_t nbytes, void *data) {
     current_state->parent_id = parent_id;
 
     if (current_state->last_step == current_state->current_factor) {
-        assert(brute_factorial(current_state->last_step)
-               == current_state->current_factorial);
         // Finished, can print.
         printf("%lld\n", current_state->current_factorial);
 
@@ -106,7 +92,7 @@ void calculate_factorial(void **stateptr, size_t nbytes, void *data) {
 // When factorial is not finished new actor calls
 // this to its parent to get last factorial state.
 // Parent sends next factorial state to actor with id in data.
-void son_waiting_for_factorial(void **stateptr, size_t nbytes, void *data) {
+static void message_wait(void **stateptr, size_t nbytes, void *data) {
     (void) nbytes;
     factorial_info_t *current_factorial = (factorial_info_t *) *stateptr;
     actor_id_t child_id = (actor_id_t) data;
@@ -133,7 +119,7 @@ void son_waiting_for_factorial(void **stateptr, size_t nbytes, void *data) {
 
 // Handles MSG_CLEAN to clean up this node and message its parent.
 // nbytes is 0 and data is NULL
-void clean_up(void **stateptr, size_t nbytes, void *data) {
+static void message_clean(void **stateptr, size_t nbytes, void *data) {
     (void) nbytes;
     (void) data;
 
@@ -167,7 +153,7 @@ void clean_up(void **stateptr, size_t nbytes, void *data) {
 
 // Allocates memory for first actor.
 // Makes actor ready for receiving calculate factorial.
-void initial_message(void **stateptr, size_t nbystes, void *data) {
+static void message_init(void **stateptr, size_t nbystes, void *data) {
     (void) nbystes;
     (void) data;
 
@@ -179,10 +165,9 @@ void initial_message(void **stateptr, size_t nbystes, void *data) {
 }
 
 int main() {
-//    int last_value;
-//    scanf("%d", &last_value);
-//    big_int n = (big_int) last_value;
-    big_int n = 5;
+    int last_value;
+    scanf("%d", &last_value);
+    big_int n = (big_int) last_value;
 
     int error_code;
     actor_id_t actor_id = -1;
@@ -190,10 +175,11 @@ int main() {
     actor_role.nprompts = 4;
     actor_role.prompts = (act_t[]) {
             message_hello,
-            calculate_factorial,
-            son_waiting_for_factorial,
-            clean_up,
-            initial_message};
+            message_calculate,
+            message_wait,
+            message_clean,
+            message_init
+    };
 
     error_code = actor_system_create(&actor_id, &actor_role);
     assert(error_code == 0);
