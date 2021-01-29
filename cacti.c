@@ -7,7 +7,7 @@
 
 // STRUCTS ====================================================================
 
-//#define printf(...) void
+#define printf(...) void
 
 // Cyclic queue of actors' events.
 typedef struct cyclic_queue {
@@ -60,11 +60,11 @@ typedef struct actors_system {
     // Array of threads.
     pthread_t threads[POOL_SIZE];
 
-    // Number of living actors
+    // Number of living actors.
     size_t living_actors;
 
-    // Keep working until all actors died or signal was sent.
-    bool keep_working;
+    // Number of messages in actors' queues.
+    size_t messages_in_system;
 } actors_system_t;
 
 // DATA =======================================================================
@@ -77,6 +77,8 @@ static __thread actor_id_t thread_actor_id = -1;
 
 // DECLARATIONS ===============================================================
 static message_t *copy_message(message_t message);
+
+static bool thread_keep_working();
 
 static void lock_mutex();
 
@@ -116,6 +118,10 @@ static message_t *copy_message(message_t message) {
     return copied;
 }
 
+static inline bool thread_keep_working() {
+    return actors_pool->living_actors > 0 || actors_pool->messages_in_system > 0;
+}
+
 static void lock_mutex() {
     int error_code = pthread_mutex_lock(&actors_pool->mutex);
     assert(error_code == 0);
@@ -148,6 +154,8 @@ static message_t *get_message(cyclic_queue_t *queue) {
     queue->messages[queue->first_full] = NULL; // todo nie potrzebne raczej
     queue->first_full = (queue->first_full + 1) % ACTOR_QUEUE_LIMIT;
 
+    actors_pool->messages_in_system--;
+
     return result;
 }
 
@@ -163,6 +171,8 @@ static void add_message(actor_id_t actor_id, cyclic_queue_t *queue,
 
     queue->messages[queue->first_empty] = message;
     queue->first_empty = (queue->first_empty + 1) % ACTOR_QUEUE_LIMIT;
+
+    actors_pool->messages_in_system++;
 
     // Adds actor to actors queue if its not already added.
     queue_add_actor(actors_pool->actors_queue, actor_id);
@@ -181,9 +191,6 @@ static void queue_add_actor(actor_queue_t *queue, actor_id_t actor) {
     }
     else if (actors_pool->actors_data[actor]->messages_queue->current_size == 0) {
         printf("ACTOR DOESNT HAVE ANY MESSAGE - NOT ADDED\n");
-        return;
-    } else if (actors_pool->actors_data[actor]->is_dead) {
-        printf("---dead actor\n");
         return;
     }
 
@@ -217,11 +224,6 @@ static actor_id_t queue_get_actor(actor_queue_t *queue) {
     // TODO BLOKUJE DODAWANIE DOPOKI NIE PRZETWORZE WIADOMOSCI
 //    actors_pool->actors_data[result]->in_queue = false;
 
-    // tak chyba nie jest, ale musi byc???
-    // ale chce zeby tak bylo !
-    // nie dodaje aktora do kolejki aktorow dopóki nie skończe aktualnego zlecenia
-    // a jesli aktualnym zleceniem jest MSG_GODIE to nie powinienem dodawac kolejny raz
-    assert(!actors_pool->actors_data[result]->is_dead); // todo
     return result;
 }
 
@@ -231,17 +233,18 @@ static void init_actors_system() {
     actors_pool = (actors_system_t *) malloc(sizeof(actors_system_t));
 
     *actors_pool = (actors_system_t) {
-        .waiting_for_actor = 0,
-        .first_empty = 0,
-        .keep_working = true
+            .waiting_for_actor = 0,
+            .first_empty = 0,
+            .living_actors = 0,
+            .messages_in_system = 0
     };
 
     actors_pool->actors_queue = (actor_queue_t *) malloc(sizeof(actor_queue_t));
 
     *(actors_pool->actors_queue) = (actor_queue_t) {
-        .first_empty = 0,
-        .first_full = 0,
-        .current_size = 0
+            .first_empty = 0,
+            .first_full = 0,
+            .current_size = 0
     };
 
     int error_code;
@@ -305,20 +308,20 @@ static void add_actor(actor_id_t *actor_id, role_t *const role) {
 
     actors_pool->actors_data[*actor_id] = (actor_t *) malloc(sizeof(actor_t));
     (*actors_pool->actors_data[*actor_id]) = (actor_t) {
-        .id = *actor_id,
-        .is_dead = false,
-        .in_queue = false,
-        .role = role,
-        .state = NULL
+            .id = *actor_id,
+            .is_dead = false,
+            .in_queue = false,
+            .role = role,
+            .state = NULL
     };
 
     actors_pool->actors_data[*actor_id]->messages_queue =
             (cyclic_queue_t *) malloc(sizeof(cyclic_queue_t));
 
     *(actors_pool->actors_data[*actor_id]->messages_queue) = (cyclic_queue_t) {
-        .first_empty = 0,
-        .first_full = 0,
-        .current_size = 0
+            .first_empty = 0,
+            .first_full = 0,
+            .current_size = 0
     };
 
     actors_pool->first_empty++;
@@ -355,18 +358,11 @@ void perform_message(actor_t *current_actor, message_t *message) {
     }
     else if (message->message_type == MSG_GODIE) {
         lock_mutex();
+
         actors_pool->living_actors--;
-
-        if (actors_pool->living_actors == 0) {
-            printf("SYSTEM SHOULD DIE!\n");
-            actors_pool->keep_working = false;
-        }
-
         current_actor->is_dead = true;
 
         unlock_mutex();
-        free(message);
-        return;
     }
     else {
         current_actor->role->prompts[message->message_type](
@@ -387,9 +383,12 @@ static void *thread_loop(void *d) {
     int error_code;
 
     lock_mutex();
-    while (actors_pool->keep_working) {
+    // Keep working if any actor is alive
+    // or some messages had been added before all actors died.
+    while (thread_keep_working()) {
         // Sleep when there are no actors.
-        while (actors_pool->actors_queue->current_size == 0 && actors_pool->keep_working) {
+        while (actors_pool->actors_queue->current_size == 0
+               && thread_keep_working()) {
             actors_pool->waiting_for_actor++;
 
             printf("THREAD SLEEP releasing mutex\n");
@@ -400,7 +399,7 @@ static void *thread_loop(void *d) {
             actors_pool->waiting_for_actor--;
 
         }
-        if (!actors_pool->keep_working) {
+        if (!thread_keep_working()) {
             printf("AWARYJNE WYSCIE !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n");
             break;
         }
