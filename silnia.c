@@ -12,8 +12,10 @@
 // All actors will share same role.
 role_t actor_role;
 
+// Type for storing factorial.
 typedef unsigned long long big_int;
 
+// todo remove
 big_int brute_factorial(big_int n) {
     big_int result = 1;
 
@@ -24,6 +26,7 @@ big_int brute_factorial(big_int n) {
     return result;
 }
 
+// Actor's state data.
 typedef struct {
     actor_id_t parent_id;
     big_int current_factorial; // 1 -> k!
@@ -36,15 +39,14 @@ typedef struct {
 // Saves parent's id and sends MSG_WAIT to parent.
 void message_hello(void **stateptr, size_t nbytes, void *data) {
     (void) nbytes;
-    printf("IN HELLO MESSAGE\n");
     actor_id_t parent_id = (actor_id_t) data;
 
-    factorial_info_t *current_state = (factorial_info_t *) malloc(sizeof(factorial_info_t));
+    // Allocates memory for actor's state.
+    factorial_info_t *current_state =
+            (factorial_info_t *) malloc(sizeof(factorial_info_t));
     *stateptr = (void *) current_state;
 
     current_state->parent_id = parent_id;
-
-    printf("FINISHED message_hello handler with parent: %ld\n", parent_id);
 
     // Sending message MSG_WAIT to parent to get next state of factorial.
     message_t message = {
@@ -55,15 +57,12 @@ void message_hello(void **stateptr, size_t nbytes, void *data) {
 
     int error_code = send_message(current_state->parent_id, message);
     assert(error_code == 0);
-
-    printf("SENT MSG_WAIT to parent: %ld\n", parent_id);
 }
 
 // Calculates factorial. If not finished makes new actor.
 // Passed data is next_factorial state
 void calculate_factorial(void **stateptr, size_t nbytes, void *data) {
     (void) nbytes;
-    printf("IN CALCULATE FACTORIAL\n");
 
     factorial_info_t *current_state = (factorial_info_t *) *stateptr;
     factorial_info_t *current_factorial = (factorial_info_t *) data;
@@ -74,9 +73,12 @@ void calculate_factorial(void **stateptr, size_t nbytes, void *data) {
     current_state->parent_id = parent_id;
 
     if (current_state->last_step == current_state->current_factor) {
-        // finished, can print
+        assert(brute_factorial(current_state->last_step)
+               == current_state->current_factorial);
+        // Finished, can print.
         printf("%lld\n", current_state->current_factorial);
 
+        // Clean recursively.
         message_t message = {
                 .message_type = MSG_CLEAN,
                 .nbytes = 0,
@@ -97,6 +99,7 @@ void calculate_factorial(void **stateptr, size_t nbytes, void *data) {
         int error_code = send_message(actor_id_self(), message);
         assert(error_code == 0);
     }
+
     free(current_factorial);
 }
 
@@ -105,12 +108,13 @@ void calculate_factorial(void **stateptr, size_t nbytes, void *data) {
 // Parent sends next factorial state to actor with id in data.
 void son_waiting_for_factorial(void **stateptr, size_t nbytes, void *data) {
     (void) nbytes;
-    printf("IN WAIT MESSAGE\n");
     factorial_info_t *current_factorial = (factorial_info_t *) *stateptr;
     actor_id_t child_id = (actor_id_t) data;
 
     big_int next_factor = current_factorial->current_factor + 1;
-    factorial_info_t *next_state = (factorial_info_t *) malloc(sizeof(factorial_info_t));
+
+    factorial_info_t *next_state =
+            (factorial_info_t *) malloc(sizeof(factorial_info_t));
     *next_state = (factorial_info_t) {
             .current_factorial = current_factorial->current_factorial * next_factor,
             .current_factor = next_factor,
@@ -123,8 +127,6 @@ void son_waiting_for_factorial(void **stateptr, size_t nbytes, void *data) {
             .data = (void *) next_state
     };
 
-    printf("SENDING MSG_CALCULATE to child %ld\n", child_id);
-
     int error_code = send_message(child_id, message);
     assert(error_code == 0);
 }
@@ -134,7 +136,6 @@ void son_waiting_for_factorial(void **stateptr, size_t nbytes, void *data) {
 void clean_up(void **stateptr, size_t nbytes, void *data) {
     (void) nbytes;
     (void) data;
-    printf("CLEANING AFTER NODE\n");
 
     factorial_info_t *current_factorial = (factorial_info_t *) *stateptr;
 
@@ -166,14 +167,13 @@ void clean_up(void **stateptr, size_t nbytes, void *data) {
 
 // Allocates memory for first actor.
 // Makes actor ready for receiving calculate factorial.
-// data is NULL
 void initial_message(void **stateptr, size_t nbystes, void *data) {
-    printf("IN INIT MESSAGE!\n");
-    assert(nbystes == 0 && data == NULL);
-    assert(stateptr != NULL);
+    (void) nbystes;
+    (void) data;
 
     factorial_info_t *current_state =
             (factorial_info_t *) malloc(sizeof(factorial_info_t));
+
     current_state->parent_id = -1;
     *stateptr = (void *) current_state;
 }
@@ -183,7 +183,6 @@ int main() {
 //    scanf("%d", &last_value);
 //    big_int n = (big_int) last_value;
     big_int n = 5;
-    printf("brute_factorial(%lld) = %lld\n", n, brute_factorial(n));
 
     int error_code;
     actor_id_t actor_id = -1;
