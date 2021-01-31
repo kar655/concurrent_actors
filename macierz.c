@@ -93,6 +93,7 @@ static void message_hello(void **stateptr, size_t nbytes, void *data) {
     assert(error_code == 0);
 }
 
+// Empty message hello handler.
 static void message_hello_admin(void **stateptr, size_t nbytes, void *data) {
     (void) stateptr;
     (void) nbytes;
