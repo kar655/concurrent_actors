@@ -5,9 +5,6 @@
 #include <signal.h>
 #include "cacti.h"
 
-#include <stdio.h>
-
-//#define printf(...) void
 
 // Cyclic queue of actors' events.
 typedef struct cyclic_queue {
@@ -66,8 +63,10 @@ typedef struct actors_system {
     // Number of messages in actors' queues.
     size_t messages_in_system;
 
-    bool got_signal;
+    // If SIGINT was sent.
+    bool got_sigint;
 
+    // Number of threads which joined main thread.
     size_t thread_collected;
 } actors_system_t;
 
@@ -78,6 +77,9 @@ static actors_system_t *actors_pool = NULL;
 // Thread local variable of current actor being processed.
 static __thread actor_id_t thread_actor_id = -1;
 
+static void handle_sigint(int sig);
+
+static void set_sigint_handler();
 
 static message_t *copy_message(message_t message);
 
@@ -111,53 +113,14 @@ void perform_message(actor_t *current_actor, message_t *message);
 static void *thread_loop(void *d);
 
 
-// IMPLEMENTATION =============================================================
-
 static void handle_sigint(int sig) {
-    printf("PROCESSING SIGINT %d ---------------------------------------------------------\n", sig);
-    actors_pool->got_signal = true;
-//    destroy_actors_system();
+    if (sig == SIGINT) {
+        actors_pool->got_sigint = true;
+    }
 }
 
 static void set_sigint_handler() {
-// pthread_t tid;
-// pthread_attr_t attr;
-// data d;
-// data *ptr = &d;
-//
-// signal(SIGSEGV,sig_func); // Register signal handler before going multithread
-// pthread_attr_init(&attr);
-// pthread_create(&tid,&attr,(void*)func,ptr);
-// sleep(1); // Leave time for initialisation
-// pthread_kill(tid,SIGSEGV);
-//
-// pthread_join(tid,NULL);
-// fprintf(stderr, "Name:%s\n",ptr->name);
-// fprintf(stderr, "Age:%d\n",ptr->age);
-
     signal(SIGINT, handle_sigint);
-
-//    struct sigaction action;
-//    sigset_t block_mask;
-//
-//    sigemptyset(&block_mask);
-//    sigaddset(&block_mask, SIGINT);
-//
-//    action.sa_handler = handle_sigint;
-//    action.sa_mask = block_mask;
-//    action.sa_flags = 0;
-//
-//    assert(sigaction(SIGINT, &action, 0) == 0);
-////    assert(sigprocmask(SIG_BLOCK, &block_mask, 0) == 0);
-//    assert(pthread_sigmask(SIG_SETMASK, &block_mask, 0) == 0);
-}
-
-static void block_sigint() {
-    sigset_t block_mask;
-
-    sigemptyset(&block_mask);
-    sigaddset(&block_mask, SIGINT);
-    assert(pthread_sigmask(SIG_SETMASK, &block_mask, 0) == 0);
 }
 
 static message_t *copy_message(message_t message) {
@@ -167,17 +130,13 @@ static message_t *copy_message(message_t message) {
     return copied;
 }
 
-// inline
 static bool thread_keep_working() {
-//    printf("stan !got_signal = %d\n", !actors_pool->got_signal);
-//    printf("actors: %zu  messages: %zu\n", actors_pool->living_actors, actors_pool->messages_in_system);
-    if (!actors_pool->got_signal) {
+    if (!actors_pool->got_sigint) {
         return actors_pool->living_actors > 0 || actors_pool->messages_in_system > 0;
     }
     else {
         return actors_pool->messages_in_system > 0;
     }
-//    return (actors_pool->living_actors > 0 || actors_pool->messages_in_system > 0) && !actors_pool->got_signal;
 }
 
 static void lock_mutex() {
@@ -275,8 +234,9 @@ static void init_actors_system() {
     *actors_pool = (actors_system_t) {
             .waiting_for_actor = 0,
             .first_empty = 0,
-            .living_actors = 0,
-            .messages_in_system = 0
+            .living_actors = 1, // Fake actor prevents threads from dying
+            .messages_in_system = 0,
+            .thread_collected = 0
     };
 
     actors_pool->actors_queue = (actor_queue_t *) malloc(sizeof(actor_queue_t));
@@ -310,14 +270,11 @@ static void destroy_actors_system() {
     for (; actors_pool->thread_collected < POOL_SIZE; ++actors_pool->thread_collected) {
 //    for (size_t thread = 0; thread < POOL_SIZE; ++thread) {
         void *thread_result;
-        printf("------------------------------------------------------ trying to collect %zu thread\n",
-               actors_pool->thread_collected);
-        error_code = pthread_join(actors_pool->threads[actors_pool->thread_collected], &thread_result);
+        error_code = pthread_join(actors_pool->threads[actors_pool->thread_collected],
+                                  &thread_result);
         assert(error_code == 0);
-        printf("------------------------------------------------------THREAD COLLECTED\n");
     }
 
-    printf("HERE\n");
     error_code = pthread_cond_destroy(&actors_pool->wait_for_actor);
     assert(error_code == 0);
 
@@ -332,14 +289,13 @@ static void destroy_actors_system() {
     free(actors_pool->actors_queue);
     free(actors_pool);
     actors_pool = NULL;
-    printf("KONIEC DESTROY\n");
 }
 
 static void add_actor(actor_id_t *actor_id, role_t *const role) {
     lock_mutex();
 
     // SIGINT was sent.
-    if (actors_pool->got_signal) {
+    if (actors_pool->got_sigint) {
         unlock_mutex();
         return;
     }
@@ -424,7 +380,6 @@ static void *thread_loop(void *d) {
     (void) d;
     int error_code;
 
-//    block_sigint();
     lock_mutex();
     // Keep working if any actor is alive
     // or some messages had been added before all actors died.
@@ -479,15 +434,16 @@ int actor_system_create(actor_id_t *actor, role_t *const role) {
     if (actors_pool != NULL) {
         return -1;
     }
-//    set_sigint_handler();
-//    block_sigint();
 
     init_actors_system();
 
-//    block_sigint();
     set_sigint_handler();
 
     add_actor(actor, role);
+
+    lock_mutex();
+    actors_pool->living_actors--; // Undo fake actor.
+    unlock_mutex();
 
     int error_code = send_message(*actor, (message_t) {
             .message_type = MSG_HELLO,
@@ -513,7 +469,7 @@ int send_message(actor_id_t actor, message_t message) {
     lock_mutex();
 
     // SIGINT was sent.
-    if (actors_pool->got_signal) {
+    if (actors_pool->got_sigint) {
         unlock_mutex();
         return 0;
     }
