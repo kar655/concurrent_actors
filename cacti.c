@@ -453,11 +453,22 @@ int actor_system_create(actor_id_t *actor, role_t *const role) {
 
     add_actor(actor, role);
 
+    int error_code = send_message(*actor, (message_t) {
+        .message_type = MSG_HELLO,
+        .nbytes = sizeof(actor_id_t),
+        .data = (void *) *actor,
+    });
+    assert(error_code == 0);
+
     return 0;
 }
 
 void actor_system_join(actor_id_t actor) {
     (void) actor; // not unused
+    if (actors_pool == NULL) {
+        return;
+    }
+
     destroy_actors_system();
 }
 

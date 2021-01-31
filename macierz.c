@@ -93,6 +93,12 @@ static void message_hello(void **stateptr, size_t nbytes, void *data) {
     assert(error_code == 0);
 }
 
+static void message_hello_admin(void **stateptr, size_t nbytes, void *data) {
+    (void) stateptr;
+    (void) nbytes;
+    (void) data;
+}
+
 // Creating admin node.
 static void message_init(void **stateptr, size_t nbytes, void *data) {
     (void) nbytes;
@@ -272,7 +278,7 @@ int main() {
 
     admin_role.nprompts = 4;
     admin_role.prompts = (act_t[]) {
-            NULL, // disable message hello
+            message_hello_admin,
             message_sum_admin,
             message_init,
             message_wait

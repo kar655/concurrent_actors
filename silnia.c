@@ -9,8 +9,10 @@
 #define MSG_CLEAN (message_type_t)0x3
 #define MSG_INIT (message_type_t)0x4
 
-// All actors will share same role.
+// All working actors will share same role.
 static role_t actor_role;
+
+static role_t first_actor_role;
 
 // Type for storing factorial.
 typedef unsigned long long big_int;
@@ -45,6 +47,12 @@ static void message_hello(void **stateptr, size_t nbytes, void *data) {
 
     int error_code = send_message(current_state->parent_id, message);
     assert(error_code == 0);
+}
+
+static void message_hello_first(void **stateptr, size_t nbytes, void *data) {
+    (void) stateptr;
+    (void) nbytes;
+    (void) data;
 }
 
 // Calculates factorial. If not finished makes new actor.
@@ -181,7 +189,16 @@ int main() {
             message_init
     };
 
-    error_code = actor_system_create(&actor_id, &actor_role);
+    first_actor_role.nprompts = 4;
+    first_actor_role.prompts = (act_t[]) {
+            message_hello_first,
+            message_calculate,
+            message_wait,
+            message_clean,
+            message_init
+    };
+
+    error_code = actor_system_create(&actor_id, &first_actor_role);
     assert(error_code == 0);
 
     // Is initialized as actor data and freed by MSG_CLEAN.
