@@ -267,11 +267,12 @@ static void destroy_actors_system() {
     int error_code;
 
     // Collect threads.
-    for (; actors_pool->thread_collected < POOL_SIZE; ++actors_pool->thread_collected) {
-//    for (size_t thread = 0; thread < POOL_SIZE; ++thread) {
+    for (; actors_pool->thread_collected < POOL_SIZE;
+           ++actors_pool->thread_collected) {
         void *thread_result;
-        error_code = pthread_join(actors_pool->threads[actors_pool->thread_collected],
-                                  &thread_result);
+        error_code = pthread_join(
+                actors_pool->threads[actors_pool->thread_collected],
+                &thread_result);
         assert(error_code == 0);
     }
 
